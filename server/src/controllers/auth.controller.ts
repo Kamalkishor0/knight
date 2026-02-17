@@ -63,27 +63,44 @@ export async function register(req: Request, res: Response) {
     },
   });
 
-  const token = signToken({ userId: user.id, email: user.email });
+  const token = signToken({username: user.username, userId: user.id, email: user.email });
   res.status(201).json({ token, user });
 }
 
 export async function login(req: Request, res: Response) {
-  const { email, password } = req.body as {
+  const { username, email, password } = req.body as {
+    username?: string;
     email?: string;
     password?: string;
   };
 
-  if (!email || !password) {
+  if (!password) {
     res.status(400).json({ message: "email and password are required" });
     return;
   }
+  if(!email && !username) {
+    res.status(400).json({ message: "email or username is required" });
+    return;
+  }
+  let user = null;
+  if(username){
+    user = await prisma.user.findUnique({
+      where: { username },
+    });
+  } else {
+      if (!email) {
+        res.status(400).json({ message: "enter email or username" });
+        return;
+      }
 
-  const normalizedEmail = email.toLowerCase().trim();
+      const normalizedEmail = email.toLowerCase().trim();
 
-  const user = await prisma.user.findUnique({
-    where: { email: normalizedEmail },
+      user = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
   });
 
+  }
+  
   if (!user) {
     res.status(401).json({ message: "Invalid email or password" });
     return;
@@ -96,7 +113,7 @@ export async function login(req: Request, res: Response) {
     return;
   }
 
-  const token = signToken({ userId: user.id, email: user.email });
+  const token = signToken({username: user.username, userId: user.id, email: user.email });
 
   res.json({
     token,

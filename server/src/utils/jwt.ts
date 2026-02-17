@@ -14,13 +14,16 @@ export function verifyToken(token: string): JwtPayload | null {
       return null;
     }
 
-    const payload = decoded as JsonWebTokenPayload;
+    const payload = decoded as JsonWebTokenPayload & Record<string, unknown>;
+    const userId = payload.userId;
+    const email = payload.email;
+    const username = payload.username;
 
-    if (typeof payload.userId !== "number" || typeof payload.email !== "string") {
+    if (typeof userId !== "string" || typeof email !== "string" || typeof username !== "string") {
       return null;
     }
 
-    return { userId: payload.userId, email: payload.email };
+    return { username, userId, email };
   } catch {
     return null;
   }

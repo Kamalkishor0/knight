@@ -10,10 +10,13 @@ export function verifyToken(token) {
             return null;
         }
         const payload = decoded;
-        if (typeof payload.userId !== "number" || typeof payload.email !== "string") {
+        const userId = payload.userId;
+        const email = payload.email;
+        const username = payload.username;
+        if (typeof userId !== "string" || typeof email !== "string" || typeof username !== "string") {
             return null;
         }
-        return { userId: payload.userId, email: payload.email };
+        return { username, userId, email };
     }
     catch {
         return null;
