@@ -7,5 +7,9 @@
 *
 * 🟢 You can import this file directly.
 */
-export {};
+export const FriendshipStatus = {
+    PENDING: 'PENDING',
+    ACCEPTED: 'ACCEPTED',
+    REJECTED: 'REJECTED'
+};
 //# sourceMappingURL=enums.js.map

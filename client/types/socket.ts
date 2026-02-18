@@ -1,0 +1,81 @@
+export type Ack<T = undefined> =
+  | { ok: true; data?: T }
+  | { ok: false; error: string };
+
+export type PlayerState = {
+  userId: string;
+  username: string;
+  online: boolean;
+  color?: "w" | "b";
+};
+
+export type RoomState = {
+  roomId: string;
+  players: PlayerState[];
+  status: "waiting" | "ready" | "playing";
+};
+
+export type MovePayload = {
+  roomId: string;
+  from: string;
+  to: string;
+  promotion?: "q" | "r" | "b" | "n";
+};
+
+export type MoveResult = {
+  roomId: string;
+  from: string;
+  to: string;
+  san: string;
+  fen: string;
+  turn: "w" | "b";
+  by: { userId: string; username: string };
+};
+
+export type GameSnapshot = {
+  roomId: string;
+  fen: string;
+  turn: "w" | "b";
+  isCheck: boolean;
+  status: "active" | "checkmate" | "stalemate" | "draw" | "insufficient_material" | "threefold_repetition" | "timeout";
+  winnerColor?: "w" | "b";
+  clockMs: { w: number; b: number };
+  players: {
+    white: { userId: string; username: string };
+    black: { userId: string; username: string };
+  };
+};
+
+export type ClientToServerEvents = {
+  "room:create": (payload: { roomId?: string }, callback: (response: Ack<RoomState>) => void) => void;
+  "room:join": (payload: { roomId: string }, callback: (response: Ack<RoomState>) => void) => void;
+  "room:leave": (callback: (response: Ack) => void) => void;
+  "room:state": (callback: (response: Ack<RoomState>) => void) => void;
+  "game:state": (callback: (response: Ack<GameSnapshot>) => void) => void;
+  "chess:move": (payload: MovePayload, callback: (response: Ack<MoveResult>) => void) => void;
+  "invite:send": (
+    payload: { toUserId: string; roomId?: string },
+    callback: (response: Ack<{ inviteLink: string; roomId: string }>) => void,
+  ) => void;
+};
+
+export type ServerToClientEvents = {
+  "presence:online": (users: Array<{ userId: string; username: string }>) => void;
+  "room:state": (room: RoomState) => void;
+  "game:start": (payload: {
+    roomId: string;
+    white: { userId: string; username: string };
+    black: { userId: string; username: string };
+    fen: string;
+    turn: "w" | "b";
+  }) => void;
+  "game:state": (snapshot: GameSnapshot) => void;
+  "game:over": (snapshot: GameSnapshot) => void;
+  "room:error": (payload: { message: string }) => void;
+  "chess:move": (payload: MoveResult) => void;
+  "invite:received": (payload: {
+    from: { userId: string; username: string };
+    roomId: string;
+    inviteLink: string;
+  }) => void;
+};

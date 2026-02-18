@@ -67,7 +67,8 @@ export const JsonNull = runtime.JsonNull;
  */
 export const AnyNull = runtime.AnyNull;
 export const ModelName = {
-    User: 'User'
+    User: 'User',
+    Friendship: 'Friendship'
 };
 /**
  * Enums
@@ -86,6 +87,15 @@ export const UserScalarFieldEnum = {
     createdAt: 'createdAt',
     updatedAt: 'updatedAt'
 };
+export const FriendshipScalarFieldEnum = {
+    id: 'id',
+    requesterId: 'requesterId',
+    addresseeId: 'addresseeId',
+    status: 'status',
+    createdAt: 'createdAt',
+    updatedAt: 'updatedAt',
+    respondedAt: 'respondedAt'
+};
 export const SortOrder = {
     asc: 'asc',
     desc: 'desc'
@@ -93,6 +103,10 @@ export const SortOrder = {
 export const QueryMode = {
     default: 'default',
     insensitive: 'insensitive'
+};
+export const NullsOrder = {
+    first: 'first',
+    last: 'last'
 };
 export const defineExtension = runtime.Extensions.defineExtension;
 //# sourceMappingURL=prismaNamespace.js.map

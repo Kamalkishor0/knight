@@ -122,5 +122,16 @@ export interface PrismaClient<in LogOpts extends Prisma.LogLevel = never, in out
     get user(): Prisma.UserDelegate<ExtArgs, {
         omit: OmitOpts;
     }>;
+    /**
+     * `prisma.friendship`: Exposes CRUD operations for the **Friendship** model.
+      * Example usage:
+      * ```ts
+      * // Fetch zero or more Friendships
+      * const friendships = await prisma.friendship.findMany()
+      * ```
+      */
+    get friendship(): Prisma.FriendshipDelegate<ExtArgs, {
+        omit: OmitOpts;
+    }>;
 }
 export declare function getPrismaClientClass(): PrismaClientConstructor;
