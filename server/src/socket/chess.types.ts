@@ -1,3 +1,7 @@
+import { Chess } from "chess.js";
+import type { Server, Socket } from "socket.io";
+import type { JwtPayload } from "../types/auth.js";
+
 export type Ack<T = undefined> =
   | { ok: true; data?: T }
   | { ok: false; error: string };
@@ -37,7 +41,14 @@ export type GameSnapshot = {
   fen: string;
   turn: "w" | "b";
   isCheck: boolean;
-  status: "active" | "checkmate" | "stalemate" | "draw" | "insufficient_material" | "threefold_repetition" | "timeout";
+  status:
+    | "active"
+    | "checkmate"
+    | "stalemate"
+    | "draw"
+    | "insufficient_material"
+    | "threefold_repetition"
+    | "timeout";
   winnerColor?: "w" | "b";
   clockMs: { w: number; b: number };
   players: {
@@ -68,7 +79,7 @@ export type ClientToServerEvents = {
     callback: (response: Ack<{ inviteLink: string; roomId: string }>) => void,
   ) => void;
   "game:rematch:request": (callback: (response: Ack<{ waitingFor?: string; started?: boolean }>) => void) => void;
-	"game:rematch:respond": (payload: { accept: boolean }, callback: (response: Ack<{ started?: boolean }>) => void) => void;
+  "game:rematch:respond": (payload: { accept: boolean }, callback: (response: Ack<{ started?: boolean }>) => void) => void;
 };
 
 export type ServerToClientEvents = {
@@ -92,4 +103,25 @@ export type ServerToClientEvents = {
     roomId: string;
     inviteLink: string;
   }) => void;
+};
+
+export type InterServerEvents = Record<string, never>;
+
+export type SocketData = {
+  auth: JwtPayload;
+};
+
+export type TypedSocket = Socket<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
+export type TypedServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
+
+export type Room = {
+  id: string;
+  players: Map<string, { userId: string; username: string }>;
+  game?: {
+    chess: Chess;
+    whiteUserId: string;
+    blackUserId: string;
+    clockMs: { w: number; b: number };
+    lastTickAt: number | null;
+  };
 };

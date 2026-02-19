@@ -5,7 +5,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 const env = {
-    port: Number(process.env.PORT ?? 3000),
+    port: Number(process.env.PORT ?? 3001),
     databaseUrl: process.env.DATABASE_URL ?? "",
     jwtSecret: process.env.JWT_SECRET ?? "",
 };

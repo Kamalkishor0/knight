@@ -1,162 +1,23 @@
-import { randomUUID } from "node:crypto";
 import { Chess, type PieceSymbol } from "chess.js";
-import type { Server, Socket } from "socket.io";
 import prisma from "../db.js";
-import type { JwtPayload } from "../types/auth.js";
 import { verifyToken } from "../utils/jwt.js";
-
-type Ack<T = undefined> =
-  | { ok: true; data?: T }
-  | { ok: false; error: string };
-
-type PlayerState = {
-  userId: string;
-  username: string;
-  online: boolean;
-  color?: "w" | "b";
-};
-
-type RoomState = {
-  roomId: string;
-  players: PlayerState[];
-  status: "waiting" | "ready" | "playing";
-};
-
-type MovePayload = {
-  roomId: string;
-  from: string;
-  to: string;
-  promotion?: "q" | "r" | "b" | "n";
-};
-
-type MoveResult = {
-  roomId: string;
-  from: string;
-  to: string;
-  san: string;
-  fen: string;
-  turn: "w" | "b";
-  by: { userId: string; username: string };
-};
-
-type GameSnapshot = {
-  roomId: string;
-  fen: string;
-  turn: "w" | "b";
-  isCheck: boolean;
-  status: "active" | "checkmate" | "stalemate" | "draw" | "insufficient_material" | "threefold_repetition" | "timeout";
-  winnerColor?: "w" | "b";
-  clockMs: { w: number; b: number };
-  players: {
-    white: { userId: string; username: string };
-    black: { userId: string; username: string };
-  };
-};
-
-type ClientToServerEvents = {
-  "room:create": (payload: { roomId?: string }, callback: (response: Ack<RoomState>) => void) => void;
-  "room:join": (payload: { roomId: string }, callback: (response: Ack<RoomState>) => void) => void;
-  "room:leave": (callback: (response: Ack) => void) => void;
-  "room:state": (callback: (response: Ack<RoomState>) => void) => void;
-  "game:state": (callback: (response: Ack<GameSnapshot>) => void) => void;
-  "chess:move": (payload: MovePayload, callback: (response: Ack<MoveResult>) => void) => void;
-  "invite:send": (
-    payload: { toUserId: string; roomId?: string },
-    callback: (response: Ack<{ inviteLink: string; roomId: string }>) => void,
-  ) => void;
-};
-
-type ServerToClientEvents = {
-  "presence:online": (users: Array<{ userId: string; username: string }>) => void;
-  "room:state": (room: RoomState) => void;
-  "game:start": (payload: {
-    roomId: string;
-    white: { userId: string; username: string };
-    black: { userId: string; username: string };
-    fen: string;
-    turn: "w" | "b";
-  }) => void;
-  "game:state": (snapshot: GameSnapshot) => void;
-  "game:over": (snapshot: GameSnapshot) => void;
-  "room:error": (payload: { message: string }) => void;
-  "chess:move": (payload: MoveResult) => void;
-  "invite:received": (payload: {
-    from: { userId: string; username: string };
-    roomId: string;
-    inviteLink: string;
-  }) => void;
-};
-
-type InterServerEvents = Record<string, never>;
-
-type SocketData = {
-  auth: JwtPayload;
-};
-
-type TypedSocket = Socket<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
-type TypedServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
-
-type Room = {
-  id: string;
-  players: Map<string, { userId: string; username: string }>;
-  game?: {
-    chess: Chess;
-    whiteUserId: string;
-    blackUserId: string;
-    clockMs: { w: number; b: number };
-    lastTickAt: number | null;
-  };
-};
-
-const INITIAL_CLOCK_MS = 3 * 60 * 1000;
-const rooms = new Map<string, Room>();
-const roomByUserId = new Map<string, string>();
-const socketsByUserId = new Map<string, Set<string>>();
-const onlineUsers = new Map<string, { userId: string; username: string }>();
-
-function applyActiveClock(game: NonNullable<Room["game"]>) {
-  if (!game.lastTickAt) {
-    return;
-  }
-
-  const now = Date.now();
-  const elapsed = now - game.lastTickAt;
-  if (elapsed <= 0) {
-    return;
-  }
-
-  const activeTurn = game.chess.turn();
-  game.clockMs[activeTurn] = Math.max(0, game.clockMs[activeTurn] - elapsed);
-  game.lastTickAt = now;
-}
-
-function extractToken(socket: TypedSocket): string | null {
-  const authToken = socket.handshake.auth.token;
-  if (typeof authToken === "string" && authToken.trim()) {
-    return authToken.trim();
-  }
-
-  const header = socket.handshake.headers.authorization;
-  if (!header || !header.startsWith("Bearer ")) {
-    return null;
-  }
-
-  const token = header.split(" ")[1];
-  return token?.trim() || null;
-}
-
-function normalizeRoomId(roomId?: string): string {
-  if (roomId && roomId.trim()) {
-    return roomId.trim().toUpperCase();
-  }
-
-  return randomUUID().split("-")[0].toUpperCase();
-}
-
-function isUserOnline(userId: string): boolean {
-  const sockets = socketsByUserId.get(userId);
-  return Boolean(sockets && sockets.size > 0);
-}
+import {
+  broadcastGameState,
+  broadcastOnlineUsers,
+  broadcastRoomState,
+  extractToken,
+  getGameSnapshot,
+  getRoomState,
+  isUserOnline,
+  leaveRoom,
+  maybeStartGame,
+  normalizeRoomId,
+  onlineUsers,
+  roomByUserId,
+  rooms,
+  socketsByUserId,
+} from "./chess.state.js";
+import type { MoveResult, Room, TypedServer } from "./chess.types.js";
 
 async function areFriends(userIdA: string, userIdB: string): Promise<boolean> {
   const friendship = await prisma.friendship.findFirst({
@@ -173,177 +34,36 @@ async function areFriends(userIdA: string, userIdB: string): Promise<boolean> {
   return Boolean(friendship);
 }
 
-function getRoomState(room: Room): RoomState {
-  const colorByUserId = room.game
-    ? new Map<string, "w" | "b">([
-        [room.game.whiteUserId, "w"],
-        [room.game.blackUserId, "b"],
-      ])
-    : new Map<string, "w" | "b">();
+const rematchAcceptedByRoomId = new Map<string, Set<string>>();
 
-  const players: PlayerState[] = Array.from(room.players.values()).map((player) => ({
-    userId: player.userId,
-    username: player.username,
-    online: isUserOnline(player.userId),
-    color: colorByUserId.get(player.userId),
-  }));
-
-  return {
-    roomId: room.id,
-    players,
-    status: room.game ? "playing" : players.length === 2 ? "ready" : "waiting",
-  };
-}
-
-function getGameSnapshot(room: Room): GameSnapshot | null {
-  if (!room.game) {
+function getEndedGameRoom(roomId: string) {
+  const room = rooms.get(roomId);
+  if (!room || !room.game) {
     return null;
   }
 
-  applyActiveClock(room.game);
-
-  const white = room.players.get(room.game.whiteUserId);
-  const black = room.players.get(room.game.blackUserId);
-
-  if (!white || !black) {
+  const snapshot = getGameSnapshot(room);
+  if (!snapshot || snapshot.status === "active") {
     return null;
   }
 
-  const chess = room.game.chess;
-  let status: GameSnapshot["status"] = "active";
-  let winnerColor: "w" | "b" | undefined;
-
-  if (room.game.clockMs.w <= 0) {
-    status = "timeout";
-    winnerColor = "b";
-  } else if (room.game.clockMs.b <= 0) {
-    status = "timeout";
-    winnerColor = "w";
-  } else if (chess.isCheckmate()) {
-    status = "checkmate";
-    winnerColor = chess.turn() === "w" ? "b" : "w";
-  } else if (chess.isStalemate()) {
-    status = "stalemate";
-  } else if (chess.isInsufficientMaterial()) {
-    status = "insufficient_material";
-  } else if (chess.isThreefoldRepetition()) {
-    status = "threefold_repetition";
-  } else if (chess.isDraw()) {
-    status = "draw";
-  }
-
-  if (status !== "active") {
-    room.game.lastTickAt = null;
-  }
-
-  return {
-    roomId: room.id,
-    fen: chess.fen(),
-    turn: chess.turn(),
-    isCheck: chess.isCheck(),
-    status,
-    winnerColor,
-    clockMs: { ...room.game.clockMs },
-    players: {
-      white: { userId: white.userId, username: white.username },
-      black: { userId: black.userId, username: black.username },
-    },
-  };
+  return room;
 }
 
-function broadcastOnlineUsers(io: TypedServer) {
-  io.emit("presence:online", Array.from(onlineUsers.values()));
-}
-
-function broadcastRoomState(io: TypedServer, roomId: string) {
+function startRematch(io: TypedServer, roomId: string) {
   const room = rooms.get(roomId);
-  if (!room) {
-    return;
+  if (!room || !room.game) {
+    return false;
   }
 
-  io.to(roomId).emit("room:state", getRoomState(room));
-}
-
-function broadcastGameState(io: TypedServer, roomId: string) {
-  const room = rooms.get(roomId);
-  if (!room) {
-    return;
-  }
-
-  const snapshot = getGameSnapshot(room);
-  if (!snapshot) {
-    return;
-  }
-
-  io.to(roomId).emit("game:state", snapshot);
-
-  if (snapshot.status !== "active") {
-    io.to(roomId).emit("game:over", snapshot);
-  }
-}
-
-function maybeStartGame(io: TypedServer, roomId: string) {
-  const room = rooms.get(roomId);
-  if (!room || room.players.size !== 2 || room.game) {
-    return;
-  }
-
-  const [white, black] = Array.from(room.players.values());
-  room.game = {
-    chess: new Chess(),
-    whiteUserId: white.userId,
-    blackUserId: black.userId,
-    clockMs: { w: INITIAL_CLOCK_MS, b: INITIAL_CLOCK_MS },
-    lastTickAt: Date.now(),
-  };
-
-  const snapshot = getGameSnapshot(room);
-  if (!snapshot) {
-    return;
-  }
-
-  io.to(roomId).emit("game:start", {
-    roomId,
-    white: snapshot.players.white,
-    black: snapshot.players.black,
-    fen: snapshot.fen,
-    turn: snapshot.turn,
+  room.game = undefined;
+  rematchAcceptedByRoomId.delete(roomId);
+  io.to(roomId).emit("game:rematch:status", {
+    status: "started",
+    message: "Rematch accepted. Starting a new game.",
   });
-
-  io.to(roomId).emit("game:state", snapshot);
-  broadcastRoomState(io, roomId);
-}
-
-function leaveRoom(io: TypedServer, socket: TypedSocket, userId: string, reason?: string) {
-  const roomId = roomByUserId.get(userId);
-  if (!roomId) {
-    return;
-  }
-
-  const room = rooms.get(roomId);
-  if (!room) {
-    roomByUserId.delete(userId);
-    return;
-  }
-
-  room.players.delete(userId);
-  roomByUserId.delete(userId);
-  socket.leave(roomId);
-
-  if (room.game && (room.game.whiteUserId === userId || room.game.blackUserId === userId)) {
-    room.game = undefined;
-  }
-
-  if (room.players.size === 0) {
-    rooms.delete(roomId);
-    return;
-  }
-
-  if (reason) {
-    io.to(roomId).emit("room:error", { message: reason });
-  }
-
-  broadcastRoomState(io, roomId);
+  maybeStartGame(io, roomId);
+  return true;
 }
 
 export function registerChessGateway(io: TypedServer) {
@@ -486,6 +206,11 @@ export function registerChessGateway(io: TypedServer) {
         return;
       }
 
+      const roomId = roomByUserId.get(userId);
+      if (roomId) {
+        rematchAcceptedByRoomId.delete(roomId);
+      }
+
       leaveRoom(io, socket, userId, `${username} left the room`);
       callback({ ok: true });
     });
@@ -576,6 +301,106 @@ export function registerChessGateway(io: TypedServer) {
       callback({ ok: true, data: eventPayload });
 
       broadcastGameState(io, roomId);
+    });
+
+    socket.on("game:rematch:request", (callback) => {
+      const roomId = roomByUserId.get(userId);
+      if (!roomId) {
+        callback({ ok: false, error: "You are not in a room" });
+        return;
+      }
+
+      const room = getEndedGameRoom(roomId);
+      if (!room || !room.game) {
+        callback({ ok: false, error: "Rematch is only available after game over" });
+        return;
+      }
+
+      const isWhite = room.game.whiteUserId === userId;
+      const isBlack = room.game.blackUserId === userId;
+      if (!isWhite && !isBlack) {
+        callback({ ok: false, error: "Only players can request rematch" });
+        return;
+      }
+
+      const opponentUserId = isWhite ? room.game.blackUserId : room.game.whiteUserId;
+      const opponent = room.players.get(opponentUserId);
+      if (!opponent) {
+        callback({ ok: false, error: "Opponent is no longer in the room" });
+        return;
+      }
+
+      const accepted = rematchAcceptedByRoomId.get(roomId) ?? new Set<string>();
+      accepted.add(userId);
+      rematchAcceptedByRoomId.set(roomId, accepted);
+
+      io.to(roomId).emit("game:rematch:status", {
+        status: "requested",
+        message: `${username} requested a rematch.`,
+        by: { userId, username },
+      });
+
+      if (!accepted.has(opponentUserId)) {
+        const opponentSocketIds = socketsByUserId.get(opponentUserId);
+        if (opponentSocketIds) {
+          for (const socketId of opponentSocketIds) {
+            io.to(socketId).emit("game:rematch:requested", {
+              from: { userId, username },
+            });
+          }
+        }
+
+        callback({ ok: true, data: { waitingFor: opponent.username } });
+        return;
+      }
+
+      const started = startRematch(io, roomId);
+      callback({ ok: true, data: { started } });
+    });
+
+    socket.on("game:rematch:respond", (payload, callback) => {
+      const roomId = roomByUserId.get(userId);
+      if (!roomId) {
+        callback({ ok: false, error: "You are not in a room" });
+        return;
+      }
+
+      const room = getEndedGameRoom(roomId);
+      if (!room || !room.game) {
+        callback({ ok: false, error: "No rematch request to respond to" });
+        return;
+      }
+
+      const isWhite = room.game.whiteUserId === userId;
+      const isBlack = room.game.blackUserId === userId;
+      if (!isWhite && !isBlack) {
+        callback({ ok: false, error: "Only players can respond to rematch" });
+        return;
+      }
+
+      if (!payload.accept) {
+        rematchAcceptedByRoomId.delete(roomId);
+        io.to(roomId).emit("game:rematch:status", {
+          status: "declined",
+          message: `${username} declined the rematch request.`,
+          by: { userId, username },
+        });
+        callback({ ok: true, data: { started: false } });
+        return;
+      }
+
+      const accepted = rematchAcceptedByRoomId.get(roomId) ?? new Set<string>();
+      accepted.add(userId);
+      rematchAcceptedByRoomId.set(roomId, accepted);
+
+      const opponentUserId = isWhite ? room.game.blackUserId : room.game.whiteUserId;
+      if (!accepted.has(opponentUserId)) {
+        callback({ ok: true, data: { started: false } });
+        return;
+      }
+
+      const started = startRematch(io, roomId);
+      callback({ ok: true, data: { started } });
     });
 
     socket.on("invite:send", async (payload, callback) => {

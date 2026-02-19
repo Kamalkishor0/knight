@@ -1,33 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { Chess } from "chess.js";
 import prisma from "../db.js";
 import { verifyToken } from "../utils/jwt.js";
-const rooms = new Map();
-const roomByUserId = new Map();
-const socketsByUserId = new Map();
-const onlineUsers = new Map();
-function extractToken(socket) {
-    const authToken = socket.handshake.auth.token;
-    if (typeof authToken === "string" && authToken.trim()) {
-        return authToken.trim();
-    }
-    const header = socket.handshake.headers.authorization;
-    if (!header || !header.startsWith("Bearer ")) {
-        return null;
-    }
-    const token = header.split(" ")[1];
-    return token?.trim() || null;
-}
-function normalizeRoomId(roomId) {
-    if (roomId && roomId.trim()) {
-        return roomId.trim().toUpperCase();
-    }
-    return randomUUID().split("-")[0].toUpperCase();
-}
-function isUserOnline(userId) {
-    const sockets = socketsByUserId.get(userId);
-    return Boolean(sockets && sockets.size > 0);
-}
+import { broadcastGameState, broadcastOnlineUsers, broadcastRoomState, extractToken, getGameSnapshot, getRoomState, isUserOnline, leaveRoom, maybeStartGame, normalizeRoomId, onlineUsers, roomByUserId, rooms, socketsByUserId, } from "./chess.state.js";
 async function areFriends(userIdA, userIdB) {
     const friendship = await prisma.friendship.findFirst({
         where: {
@@ -41,139 +14,31 @@ async function areFriends(userIdA, userIdB) {
     });
     return Boolean(friendship);
 }
-function getRoomState(room) {
-    const colorByUserId = room.game
-        ? new Map([
-            [room.game.whiteUserId, "w"],
-            [room.game.blackUserId, "b"],
-        ])
-        : new Map();
-    const players = Array.from(room.players.values()).map((player) => ({
-        userId: player.userId,
-        username: player.username,
-        online: isUserOnline(player.userId),
-        color: colorByUserId.get(player.userId),
-    }));
-    return {
-        roomId: room.id,
-        players,
-        status: room.game ? "playing" : players.length === 2 ? "ready" : "waiting",
-    };
-}
-function getGameSnapshot(room) {
-    if (!room.game) {
+const rematchAcceptedByRoomId = new Map();
+function getEndedGameRoom(roomId) {
+    const room = rooms.get(roomId);
+    if (!room || !room.game) {
         return null;
     }
-    const white = room.players.get(room.game.whiteUserId);
-    const black = room.players.get(room.game.blackUserId);
-    if (!white || !black) {
+    const snapshot = getGameSnapshot(room);
+    if (!snapshot || snapshot.status === "active") {
         return null;
     }
-    const chess = room.game.chess;
-    let status = "active";
-    let winnerColor;
-    if (chess.isCheckmate()) {
-        status = "checkmate";
-        winnerColor = chess.turn() === "w" ? "b" : "w";
-    }
-    else if (chess.isStalemate()) {
-        status = "stalemate";
-    }
-    else if (chess.isInsufficientMaterial()) {
-        status = "insufficient_material";
-    }
-    else if (chess.isThreefoldRepetition()) {
-        status = "threefold_repetition";
-    }
-    else if (chess.isDraw()) {
-        status = "draw";
-    }
-    return {
-        roomId: room.id,
-        fen: chess.fen(),
-        turn: chess.turn(),
-        isCheck: chess.isCheck(),
-        status,
-        winnerColor,
-        players: {
-            white: { userId: white.userId, username: white.username },
-            black: { userId: black.userId, username: black.username },
-        },
-    };
+    return room;
 }
-function broadcastOnlineUsers(io) {
-    io.emit("presence:online", Array.from(onlineUsers.values()));
-}
-function broadcastRoomState(io, roomId) {
+function startRematch(io, roomId) {
     const room = rooms.get(roomId);
-    if (!room) {
-        return;
+    if (!room || !room.game) {
+        return false;
     }
-    io.to(roomId).emit("room:state", getRoomState(room));
-}
-function broadcastGameState(io, roomId) {
-    const room = rooms.get(roomId);
-    if (!room) {
-        return;
-    }
-    const snapshot = getGameSnapshot(room);
-    if (!snapshot) {
-        return;
-    }
-    io.to(roomId).emit("game:state", snapshot);
-    if (snapshot.status !== "active") {
-        io.to(roomId).emit("game:over", snapshot);
-    }
-}
-function maybeStartGame(io, roomId) {
-    const room = rooms.get(roomId);
-    if (!room || room.players.size !== 2 || room.game) {
-        return;
-    }
-    const [white, black] = Array.from(room.players.values());
-    room.game = {
-        chess: new Chess(),
-        whiteUserId: white.userId,
-        blackUserId: black.userId,
-    };
-    const snapshot = getGameSnapshot(room);
-    if (!snapshot) {
-        return;
-    }
-    io.to(roomId).emit("game:start", {
-        roomId,
-        white: snapshot.players.white,
-        black: snapshot.players.black,
-        fen: snapshot.fen,
-        turn: snapshot.turn,
+    room.game = undefined;
+    rematchAcceptedByRoomId.delete(roomId);
+    io.to(roomId).emit("game:rematch:status", {
+        status: "started",
+        message: "Rematch accepted. Starting a new game.",
     });
-    io.to(roomId).emit("game:state", snapshot);
-    broadcastRoomState(io, roomId);
-}
-function leaveRoom(io, socket, userId, reason) {
-    const roomId = roomByUserId.get(userId);
-    if (!roomId) {
-        return;
-    }
-    const room = rooms.get(roomId);
-    if (!room) {
-        roomByUserId.delete(userId);
-        return;
-    }
-    room.players.delete(userId);
-    roomByUserId.delete(userId);
-    socket.leave(roomId);
-    if (room.game && (room.game.whiteUserId === userId || room.game.blackUserId === userId)) {
-        room.game = undefined;
-    }
-    if (room.players.size === 0) {
-        rooms.delete(roomId);
-        return;
-    }
-    if (reason) {
-        io.to(roomId).emit("room:error", { message: reason });
-    }
-    broadcastRoomState(io, roomId);
+    maybeStartGame(io, roomId);
+    return true;
 }
 export function registerChessGateway(io) {
     io.use((socket, next) => {
@@ -286,6 +151,10 @@ export function registerChessGateway(io) {
                 callback({ ok: false, error: "You are not in a room" });
                 return;
             }
+            const roomId = roomByUserId.get(userId);
+            if (roomId) {
+                rematchAcceptedByRoomId.delete(roomId);
+            }
             leaveRoom(io, socket, userId, `${username} left the room`);
             callback({ ok: true });
         });
@@ -306,6 +175,12 @@ export function registerChessGateway(io) {
             }
             if (!room.game) {
                 callback({ ok: false, error: "Game not started" });
+                return;
+            }
+            const snapshotBeforeMove = getGameSnapshot(room);
+            if (!snapshotBeforeMove || snapshotBeforeMove.status !== "active") {
+                broadcastGameState(io, roomId);
+                callback({ ok: false, error: "Game is already over" });
                 return;
             }
             const playerColor = room.game.whiteUserId === userId ? "w" : room.game.blackUserId === userId ? "b" : null;
@@ -340,6 +215,7 @@ export function registerChessGateway(io) {
                 callback({ ok: false, error: "Illegal move" });
                 return;
             }
+            room.game.lastTickAt = Date.now();
             const eventPayload = {
                 roomId,
                 from,
@@ -352,6 +228,90 @@ export function registerChessGateway(io) {
             io.to(roomId).emit("chess:move", eventPayload);
             callback({ ok: true, data: eventPayload });
             broadcastGameState(io, roomId);
+        });
+        socket.on("game:rematch:request", (callback) => {
+            const roomId = roomByUserId.get(userId);
+            if (!roomId) {
+                callback({ ok: false, error: "You are not in a room" });
+                return;
+            }
+            const room = getEndedGameRoom(roomId);
+            if (!room || !room.game) {
+                callback({ ok: false, error: "Rematch is only available after game over" });
+                return;
+            }
+            const isWhite = room.game.whiteUserId === userId;
+            const isBlack = room.game.blackUserId === userId;
+            if (!isWhite && !isBlack) {
+                callback({ ok: false, error: "Only players can request rematch" });
+                return;
+            }
+            const opponentUserId = isWhite ? room.game.blackUserId : room.game.whiteUserId;
+            const opponent = room.players.get(opponentUserId);
+            if (!opponent) {
+                callback({ ok: false, error: "Opponent is no longer in the room" });
+                return;
+            }
+            const accepted = rematchAcceptedByRoomId.get(roomId) ?? new Set();
+            accepted.add(userId);
+            rematchAcceptedByRoomId.set(roomId, accepted);
+            io.to(roomId).emit("game:rematch:status", {
+                status: "requested",
+                message: `${username} requested a rematch.`,
+                by: { userId, username },
+            });
+            if (!accepted.has(opponentUserId)) {
+                const opponentSocketIds = socketsByUserId.get(opponentUserId);
+                if (opponentSocketIds) {
+                    for (const socketId of opponentSocketIds) {
+                        io.to(socketId).emit("game:rematch:requested", {
+                            from: { userId, username },
+                        });
+                    }
+                }
+                callback({ ok: true, data: { waitingFor: opponent.username } });
+                return;
+            }
+            const started = startRematch(io, roomId);
+            callback({ ok: true, data: { started } });
+        });
+        socket.on("game:rematch:respond", (payload, callback) => {
+            const roomId = roomByUserId.get(userId);
+            if (!roomId) {
+                callback({ ok: false, error: "You are not in a room" });
+                return;
+            }
+            const room = getEndedGameRoom(roomId);
+            if (!room || !room.game) {
+                callback({ ok: false, error: "No rematch request to respond to" });
+                return;
+            }
+            const isWhite = room.game.whiteUserId === userId;
+            const isBlack = room.game.blackUserId === userId;
+            if (!isWhite && !isBlack) {
+                callback({ ok: false, error: "Only players can respond to rematch" });
+                return;
+            }
+            if (!payload.accept) {
+                rematchAcceptedByRoomId.delete(roomId);
+                io.to(roomId).emit("game:rematch:status", {
+                    status: "declined",
+                    message: `${username} declined the rematch request.`,
+                    by: { userId, username },
+                });
+                callback({ ok: true, data: { started: false } });
+                return;
+            }
+            const accepted = rematchAcceptedByRoomId.get(roomId) ?? new Set();
+            accepted.add(userId);
+            rematchAcceptedByRoomId.set(roomId, accepted);
+            const opponentUserId = isWhite ? room.game.blackUserId : room.game.whiteUserId;
+            if (!accepted.has(opponentUserId)) {
+                callback({ ok: true, data: { started: false } });
+                return;
+            }
+            const started = startRematch(io, roomId);
+            callback({ ok: true, data: { started } });
         });
         socket.on("invite:send", async (payload, callback) => {
             const toUserId = payload.toUserId?.trim();
