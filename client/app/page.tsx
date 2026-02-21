@@ -1,185 +1,73 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { FormEvent, useMemo, useState } from "react";
-import { AUTH_TOKEN_STORAGE_KEY } from "@/lib/auth";
-import { API_BASE_URL } from "@/lib/runtime-config";
+import Link from "next/link";
 
-const API_URL = API_BASE_URL;
-
-type AuthMode = "login" | "signup";
-
-type User = {
-	id: string;
-	username: string;
-	email: string;
-	createdAt: string;
-};
-
-type AuthResponse = {
-	token: string;
-	user: User;
-};
+const files = ["a", "b", "c", "d", "e", "f", "g", "h"];
+const randomPieces = [
+	{ piece: "♚", row: 0, col: 4, isLightPiece: false },
+	{ piece: "♛", row: 2, col: 6, isLightPiece: false },
+	{ piece: "♜", row: 4, col: 1, isLightPiece: false },
+	{ piece: "♞", row: 5, col: 5, isLightPiece: false },
+	{ piece: "♔", row: 7, col: 3, isLightPiece: true },
+	{ piece: "♕", row: 6, col: 1, isLightPiece: true },
+	{ piece: "♝", row: 3, col: 3, isLightPiece: true },
+	{ piece: "♙", row: 6, col: 6, isLightPiece: true },
+];
 
 export default function LandingPage() {
-	const router = useRouter();
-	const [mode, setMode] = useState<AuthMode>("login");
-	const [usernameOrEmail, setUsernameOrEmail] = useState("");
-	const [username, setUsername] = useState("");
-	const [email, setEmail] = useState("");
-	const [password, setPassword] = useState("");
-	const [loading, setLoading] = useState(false);
-	const [status, setStatus] = useState("");
-
-	const heading = useMemo(() => (mode === "login" ? "Log in to Knight" : "Create your Knight account"), [mode]);
-
-	async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-		event.preventDefault();
-		setStatus("");
-
-		if (!password.trim()) {
-			setStatus("Password is required.");
-			return;
-		}
-
-		if (mode === "signup") {
-			if (!username.trim() || !email.trim()) {
-				setStatus("Username, email and password are required.");
-				return;
-			}
-		} else if (!usernameOrEmail.trim()) {
-			setStatus("Enter your username or email.");
-			return;
-		}
-
-		setLoading(true);
-		try {
-			const endpoint = mode === "login" ? "/auth/login" : "/auth/register";
-			const body =
-				mode === "login"
-					? {
-						password,
-						...(usernameOrEmail.includes("@")
-							? { email: usernameOrEmail.trim().toLowerCase() }
-							: { username: usernameOrEmail.trim().toLowerCase() }),
-					}
-					: {
-						username: username.trim().toLowerCase(),
-						email: email.trim().toLowerCase(),
-						password,
-					};
-
-			const response = await fetch(`${API_URL}${endpoint}`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(body),
-			});
-
-			const data = (await response.json().catch(() => null)) as AuthResponse | { message?: string } | null;
-
-			if (!response.ok || !data || !("token" in data)) {
-				setStatus(data && "message" in data && data.message ? data.message : "Authentication failed.");
-				return;
-			}
-
-			window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, data.token);
-			setStatus("Authentication successful. Redirecting...");
-			router.push("/friends");
-		} catch {
-			setStatus("Could not reach server.");
-		} finally {
-			setLoading(false);
-		}
-	}
-
 	return (
-		<main className="min-h-screen bg-slate-900 px-6 py-10 text-slate-100">
-			<div className="mx-auto w-full max-w-md rounded-2xl border border-slate-700 bg-slate-800 p-6 shadow-lg shadow-black/20">
-				<h1 className="text-2xl font-semibold">Knight</h1>
-				<p className="mt-1 text-sm text-slate-300">Welcome. Log in or sign up to manage your friends.</p>
+		<main className="relative min-h-screen overflow-hidden bg-slate-950 px-6 py-10 text-slate-100">
+			<div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.16),transparent_35%),radial-gradient(circle_at_80%_80%,rgba(168,85,247,0.16),transparent_30%)]" />
 
-				<div className="mt-6 grid grid-cols-2 rounded-lg bg-slate-700 p-1 text-sm">
-					<button
-						type="button"
-						onClick={() => {
-							setMode("login");
-							setStatus("");
-						}}
-						className={`rounded-md px-3 py-2 font-medium ${mode === "login" ? "bg-slate-800 text-white shadow" : "text-slate-300"}`}
-					>
-						Login
-					</button>
-					<button
-						type="button"
-						onClick={() => {
-							setMode("signup");
-							setStatus("");
-						}}
-						className={`rounded-md px-3 py-2 font-medium ${mode === "signup" ? "bg-slate-800 text-white shadow" : "text-slate-300"}`}
-					>
-						Signup
-					</button>
+			<div className="relative mx-auto flex min-h-[calc(100vh-5rem)] w-full max-w-6xl items-center gap-10 lg:flex-row">
+				<div className="w-full lg:w-1/2">
+					<p className="text-sm uppercase tracking-[0.2em] text-sky-300">Knight Chess</p>
+					<h1 className="mt-3 text-4xl font-bold leading-tight md:text-6xl">Play smarter. Challenge faster.</h1>
+					<p className="mt-4 max-w-xl text-slate-300 md:text-lg">
+						Play, chat and have fun.
+					</p>
+
+					<div className="mt-8 flex flex-wrap gap-3">
+						<Link
+							href="/auth"
+							className="rounded-xl bg-sky-500 px-6 py-3 font-semibold text-slate-950 transition hover:bg-sky-400"
+						>
+							Get Started
+						</Link>
+					</div>
 				</div>
 
-				<h2 className="mt-6 text-lg font-medium">{heading}</h2>
-				<form onSubmit={handleSubmit} className="mt-4 space-y-3" autoComplete="on">
-					{mode === "signup" ? (
-						<>
-							<input
-								type="text"
-								name="username"
-								autoComplete="username"
-								placeholder="Username"
-								className="w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100 placeholder:text-slate-400"
-								value={username}
-								onChange={(event) => setUsername(event.target.value)}
-								required
-							/>
-							<input
-								type="email"
-								name="email"
-								autoComplete="email"
-								placeholder="Email"
-								className="w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100 placeholder:text-slate-400"
-								value={email}
-								onChange={(event) => setEmail(event.target.value)}
-								required
-							/>
-						</>
-					) : (
-						<input
-							type="text"
-							name="usernameOrEmail"
-							autoComplete="username"
-							placeholder="Username or email"
-							className="w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100 placeholder:text-slate-400"
-							value={usernameOrEmail}
-							onChange={(event) => setUsernameOrEmail(event.target.value)}
-							required
-						/>
-					)}
+				<div className="w-full lg:w-1/2">
+					<div className="mx-auto max-w-md rounded-3xl border border-slate-700/70 bg-slate-900/80 p-4 shadow-2xl shadow-black/40 backdrop-blur">
+						<div className="relative grid aspect-square grid-cols-8 overflow-hidden rounded-2xl border border-slate-700">
+							{Array.from({ length: 64 }).map((_, index) => {
+								const row = Math.floor(index / 8);
+								const col = index % 8;
+								const isLight = (row + col) % 2 === 0;
 
-					<input
-						type="password"
-						name="password"
-						autoComplete={mode === "login" ? "current-password" : "new-password"}
-						placeholder="Password"
-						className="w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100 placeholder:text-slate-400"
-						value={password}
-						onChange={(event) => setPassword(event.target.value)}
-						required
-					/>
+								return <div key={`${row}-${col}`} className={isLight ? "bg-slate-300" : "bg-slate-700"} />;
+							})}
 
-					<button
-						type="submit"
-						disabled={loading}
-						className="w-full rounded-md bg-slate-900 px-3 py-2 font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-70"
-					>
-						{loading ? "Please wait..." : mode === "login" ? "Log in" : "Create account"}
-					</button>
-				</form>
+							{randomPieces.map((entry, index) => (
+								<div
+									key={`${entry.piece}-${entry.row}-${entry.col}-${index}`}
+									className={`absolute flex h-[12.5%] w-[12.5%] items-center justify-center text-[clamp(1.1rem,2.2vw,1.8rem)] ${
+										entry.isLightPiece ? "text-slate-100" : "text-slate-900"
+									}`}
+									style={{ top: `${entry.row * 12.5}%`, left: `${entry.col * 12.5}%` }}
+								>
+									{entry.piece}
+								</div>
+							))}
+						</div>
 
-				{status ? <p className="mt-4 text-sm text-slate-300">{status}</p> : null}
+						<div className="mt-3 flex items-center justify-between px-1 text-xs text-slate-400">
+							<span>8</span>
+							<span>{files.join("  ")}</span>
+							<span>1</span>
+						</div>
+					</div>
+				</div>
 			</div>
 		</main>
 	);

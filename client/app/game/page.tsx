@@ -1,7 +1,7 @@
 "use client";
 
 import { Chess, type Square } from "chess.js";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BoardPanel } from "@/components/game/BoardPanel";
 import { GameHeader } from "@/components/game/GameHeader";
@@ -18,8 +18,7 @@ const SOCKET_URL = SOCKET_BASE_URL;
 
 export default function GamePage() {
 	const router = useRouter();
-	const searchParams = useSearchParams();
-	const requestedRoomId = (searchParams.get("room") || "").trim().toUpperCase();
+	const [requestedRoomId, setRequestedRoomId] = useState("");
 
 	const token = useStoredAuthToken();
 	const [connected, setConnected] = useState(false);
@@ -39,9 +38,20 @@ export default function GamePage() {
 
 	useEffect(() => {
 		if (!token) {
-			router.replace("/");
+			router.replace("/auth");
 		}
 	}, [router, token]);
+
+	useEffect(() => {
+		const roomFromQuery = new URLSearchParams(window.location.search).get("room");
+		setRequestedRoomId((roomFromQuery || "").trim().toUpperCase());
+	}, []);
+
+	useEffect(() => {
+		if (requestedRoomId) {
+			setRoomIdInput(requestedRoomId);
+		}
+	}, [requestedRoomId]);
 
 	const myUserId = useMemo(() => (token ? parseUserIdFromToken(token) : null), [token]);
 

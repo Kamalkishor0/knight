@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
-import { clearStoredAuthToken, getStoredAuthToken } from "@/lib/auth";
+import { clearStoredAuthToken, useStoredAuthToken } from "@/lib/auth";
 import { connectSocket, disconnectSocket, getSocket } from "@/lib/socket";
 import { API_BASE_URL, SOCKET_BASE_URL } from "@/lib/runtime-config";
 import type { Ack, RoomState } from "@/types/socket";
@@ -37,7 +37,7 @@ type ReceivedInvite = {
 
 export default function FriendsPage() {
 	const router = useRouter();
-	const [token] = useState(() => getStoredAuthToken());
+	const token = useStoredAuthToken();
 	const [friendUsername, setFriendUsername] = useState("");
 	const [friends, setFriends] = useState<Friend[]>([]);
 	const [incoming, setIncoming] = useState<IncomingRequest[]>([]);
@@ -49,7 +49,7 @@ export default function FriendsPage() {
 
 	useEffect(() => {
 		if (!token) {
-			router.replace("/");
+			router.replace("/auth");
 		}
 	}, [router, token]);
 
@@ -256,7 +256,7 @@ export default function FriendsPage() {
 	function handleLogout() {
 		disconnectSocket();
 		clearStoredAuthToken();
-		router.replace("/");
+		router.replace("/auth");
 	}
 
 	if (!token) {
@@ -266,7 +266,7 @@ export default function FriendsPage() {
 	const onlineFriendsCount = friends.filter((friend) => onlineUserIds.has(friend.id)).length;
 
 	return (
-		<main className="min-h-screen bg-slate-900 px-6 py-10 text-slate-100">
+		<main className="min-h-screen bg-slate-900 px-6 py-10 text-slate-100 flex items-center justify-center">
 			<div className="mx-auto grid w-full max-w-4xl gap-4">
 				<header className="rounded-2xl border border-slate-700 bg-slate-800 p-5 shadow-lg shadow-black/20">
 					<div className="flex items-center justify-between gap-3">
