@@ -99,6 +99,8 @@ export function getGameSnapshot(room: Room): GameSnapshot | null {
   } else if (room.game.clockMs.b <= 0) {
     status = "timeout";
     winnerColor = "w";
+  } else if (room.game.agreedDraw) {
+    status = "draw";
   } else if (chess.isCheckmate()) {
     status = "checkmate";
     winnerColor = chess.turn() === "w" ? "b" : "w";
@@ -183,6 +185,7 @@ export function maybeStartGame(io: TypedServer, roomId: string) {
     blackUserId: black.userId,
     clockMs: { w: INITIAL_CLOCK_MS, b: INITIAL_CLOCK_MS },
     lastTickAt: Date.now(),
+    agreedDraw: false,
   };
 
   const snapshot = getGameSnapshot(room);

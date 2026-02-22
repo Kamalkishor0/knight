@@ -35,6 +35,7 @@ async function areFriends(userIdA: string, userIdB: string): Promise<boolean> {
 }
 
 const rematchAcceptedByRoomId = new Map<string, Set<string>>();
+const drawOfferedByRoomId = new Map<string, string>();
 
 function getEndedGameRoom(roomId: string) {
   const room = rooms.get(roomId);
@@ -50,6 +51,20 @@ function getEndedGameRoom(roomId: string) {
   return room;
 }
 
+function getActiveGameRoom(roomId: string) {
+  const room = rooms.get(roomId);
+  if (!room || !room.game) {
+    return null;
+  }
+
+  const snapshot = getGameSnapshot(room);
+  if (!snapshot || snapshot.status !== "active") {
+    return null;
+  }
+
+  return room;
+}
+
 function startRematch(io: TypedServer, roomId: string) {
   const room = rooms.get(roomId);
   if (!room || !room.game) {
@@ -58,6 +73,7 @@ function startRematch(io: TypedServer, roomId: string) {
 
   room.game = undefined;
   rematchAcceptedByRoomId.delete(roomId);
+  drawOfferedByRoomId.delete(roomId);
   io.to(roomId).emit("game:rematch:status", {
     status: "started",
     message: "Rematch accepted. Starting a new game.",
@@ -209,6 +225,7 @@ export function registerChessGateway(io: TypedServer) {
       const roomId = roomByUserId.get(userId);
       if (roomId) {
         rematchAcceptedByRoomId.delete(roomId);
+        drawOfferedByRoomId.delete(roomId);
       }
 
       leaveRoom(io, socket, userId, `${username} left the room`);
@@ -286,6 +303,7 @@ export function registerChessGateway(io: TypedServer) {
       }
 
       room.game.lastTickAt = Date.now();
+      drawOfferedByRoomId.delete(roomId);
 
       const eventPayload: MoveResult = {
         roomId,
@@ -403,6 +421,120 @@ export function registerChessGateway(io: TypedServer) {
       callback({ ok: true, data: { started } });
     });
 
+    socket.on("game:draw:request", (callback) => {
+      const roomId = roomByUserId.get(userId);
+      if (!roomId) {
+        callback({ ok: false, error: "You are not in a room" });
+        return;
+      }
+
+      const room = getActiveGameRoom(roomId);
+      if (!room || !room.game) {
+        callback({ ok: false, error: "Draw offer is only available during an active game" });
+        return;
+      }
+
+      const isWhite = room.game.whiteUserId === userId;
+      const isBlack = room.game.blackUserId === userId;
+      if (!isWhite && !isBlack) {
+        callback({ ok: false, error: "Only players can offer a draw" });
+        return;
+      }
+
+      const opponentUserId = isWhite ? room.game.blackUserId : room.game.whiteUserId;
+      const opponent = room.players.get(opponentUserId);
+      if (!opponent) {
+        callback({ ok: false, error: "Opponent is no longer in the room" });
+        return;
+      }
+
+      const existingOfferFrom = drawOfferedByRoomId.get(roomId);
+      if (existingOfferFrom === userId) {
+        callback({ ok: false, error: "You have already offered a draw" });
+        return;
+      }
+
+      if (existingOfferFrom === opponentUserId) {
+        callback({ ok: false, error: "Respond to the current draw offer first" });
+        return;
+      }
+
+      drawOfferedByRoomId.set(roomId, userId);
+
+      io.to(roomId).emit("game:draw:status", {
+        status: "requested",
+        message: `${username} offered a draw.`,
+        by: { userId, username },
+      });
+
+      const opponentSocketIds = socketsByUserId.get(opponentUserId);
+      if (opponentSocketIds) {
+        for (const socketId of opponentSocketIds) {
+          io.to(socketId).emit("game:draw:requested", {
+            from: { userId, username },
+          });
+        }
+      }
+
+      callback({ ok: true, data: { waitingFor: opponent.username } });
+    });
+
+    socket.on("game:draw:respond", (payload, callback) => {
+      const roomId = roomByUserId.get(userId);
+      if (!roomId) {
+        callback({ ok: false, error: "You are not in a room" });
+        return;
+      }
+
+      const room = getActiveGameRoom(roomId);
+      if (!room || !room.game) {
+        callback({ ok: false, error: "No active draw offer to respond to" });
+        return;
+      }
+
+      const isWhite = room.game.whiteUserId === userId;
+      const isBlack = room.game.blackUserId === userId;
+      if (!isWhite && !isBlack) {
+        callback({ ok: false, error: "Only players can respond to draw offers" });
+        return;
+      }
+
+      const offeredBy = drawOfferedByRoomId.get(roomId);
+      if (!offeredBy) {
+        callback({ ok: false, error: "No pending draw offer" });
+        return;
+      }
+
+      if (offeredBy === userId) {
+        callback({ ok: false, error: "You cannot respond to your own draw offer" });
+        return;
+      }
+
+      if (!payload.accept) {
+        drawOfferedByRoomId.delete(roomId);
+        io.to(roomId).emit("game:draw:status", {
+          status: "declined",
+          message: `${username} declined the draw offer.`,
+          by: { userId, username },
+        });
+        callback({ ok: true, data: { accepted: false } });
+        return;
+      }
+
+      room.game.agreedDraw = true;
+      room.game.lastTickAt = null;
+      drawOfferedByRoomId.delete(roomId);
+
+      io.to(roomId).emit("game:draw:status", {
+        status: "accepted",
+        message: `${username} accepted the draw offer.`,
+        by: { userId, username },
+      });
+
+      broadcastGameState(io, roomId);
+      callback({ ok: true, data: { accepted: true } });
+    });
+
     socket.on("invite:send", async (payload, callback) => {
       const toUserId = payload.toUserId?.trim();
       if (!toUserId) {
@@ -464,6 +596,7 @@ export function registerChessGateway(io: TypedServer) {
           const currentRoomId = roomByUserId.get(userId);
           if (currentRoomId) {
             broadcastRoomState(io, currentRoomId);
+            drawOfferedByRoomId.delete(currentRoomId);
           }
         } else {
           socketsByUserId.set(userId, sockets);

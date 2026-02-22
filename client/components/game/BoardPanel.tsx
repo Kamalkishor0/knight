@@ -9,6 +9,8 @@ type BoardPanelProps = {
 	isGameOver: boolean;
 	rematchRequestFrom: string | null;
 	isWaitingRematchResponse: boolean;
+	drawRequestFrom: string | null;
+	isWaitingDrawResponse: boolean;
 	clockMs: { w: number; b: number };
 	selectedSquare: string | null;
 	legalTargets: string[];
@@ -18,6 +20,9 @@ type BoardPanelProps = {
 	onNewGame: () => void;
 	onAcceptRematch: () => void;
 	onDeclineRematch: () => void;
+	onOfferDraw: () => void;
+	onAcceptDraw: () => void;
+	onDeclineDraw: () => void;
 	onExit: () => void;
 };
 
@@ -28,6 +33,8 @@ export function BoardPanel({
 	isGameOver,
 	rematchRequestFrom,
 	isWaitingRematchResponse,
+	drawRequestFrom,
+	isWaitingDrawResponse,
 	clockMs,
 	selectedSquare,
 	legalTargets,
@@ -37,58 +44,79 @@ export function BoardPanel({
 	onNewGame,
 	onAcceptRematch,
 	onDeclineRematch,
+	onOfferDraw,
+	onAcceptDraw,
+	onDeclineDraw,
 	onExit,
 }: BoardPanelProps) {
 	const showIncomingRematch = Boolean(rematchRequestFrom);
+	const showIncomingDraw = Boolean(drawRequestFrom);
+
+	const gameOverSummary = (() => {
+		if (!gameState || gameState.status === "active") {
+			return null;
+		}
+
+		if (gameState.status === "checkmate") {
+			return gameState.winnerColor
+				? `${gameState.winnerColor === "w" ? "White" : "Black"} wins by checkmate`
+				: "Checkmate";
+		}
+
+		if (gameState.status === "timeout") {
+			return gameState.winnerColor
+				? `${gameState.winnerColor === "w" ? "White" : "Black"} wins on time`
+				: "Game ended on time";
+		}
+
+		if (
+			gameState.status === "draw" ||
+			gameState.status === "stalemate" ||
+			gameState.status === "insufficient_material" ||
+			gameState.status === "threefold_repetition"
+		) {
+			return "Draw";
+		}
+
+		return "Game over";
+	})();
 
 	return (
+		<>
 		<div className="rounded-2xl border border-slate-700 bg-slate-800 p-5 shadow-lg shadow-black/20">
 			<h2 className="text-lg font-medium">Board</h2>
 			<p className="mt-1 text-sm text-slate-300">You are: {myColor === "w" ? "White" : myColor === "b" ? "Black" : "Spectator"}</p>
-			{gameState?.winnerColor ? (
-				<p className="mt-1 text-sm font-medium text-rose-600">
-					Winner: {gameState.winnerColor === "w" ? "White" : "Black"}
-					{gameState.status === "checkmate" ? " (checkmate)" : gameState.status === "timeout" ? " (time out)" : ""}
-				</p>
-			) : null}
 
-			{isGameOver ? (
-				<div className="mt-3 flex flex-wrap gap-2">
-					{showIncomingRematch ? (
+			{!isGameOver && myColor ? (
+				<div className="mt-3 flex flex-wrap items-center gap-2">
+					{showIncomingDraw ? (
 						<>
-							<p className="w-full text-sm text-slate-300">{rematchRequestFrom} wants a rematch. Start a new game?</p>
+							<p className="w-full text-sm text-slate-300">{drawRequestFrom} offered a draw. Accept?</p>
 							<button
 								type="button"
-								onClick={onAcceptRematch}
+								onClick={onAcceptDraw}
 								className="rounded bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700"
 							>
-								Yes
+								Accept draw
 							</button>
 							<button
 								type="button"
-								onClick={onDeclineRematch}
+								onClick={onDeclineDraw}
 								className="rounded bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
 							>
-								No
+								Decline
 							</button>
 						</>
 					) : (
 						<button
 							type="button"
-							onClick={onNewGame}
-							disabled={isWaitingRematchResponse}
-							className="rounded bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70"
+							onClick={onOfferDraw}
+							disabled={isWaitingDrawResponse}
+							className="rounded bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-70"
 						>
-							{isWaitingRematchResponse ? "Waiting for response..." : "New game"}
+							{isWaitingDrawResponse ? "Draw offer sent" : "Offer draw"}
 						</button>
 					)}
-					<button
-						type="button"
-						onClick={onExit}
-						className="rounded bg-slate-700 px-3 py-2 text-sm font-medium text-white hover:bg-slate-600"
-					>
-						Exit
-					</button>
 				</div>
 			) : null}
 
@@ -146,5 +174,53 @@ export function BoardPanel({
 				<p className="mt-3 text-sm text-slate-400">Board appears when game starts (2 players in room).</p>
 			)}
 		</div>
+
+		{isGameOver && gameOverSummary ? (
+			<div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4">
+				<div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-800 p-6 shadow-xl shadow-black/40">
+					<h3 className="text-xl font-semibold">Game over</h3>
+					<p className="mt-2 text-base text-slate-100">{gameOverSummary}</p>
+
+					<div className="mt-4 flex flex-wrap gap-2">
+						{showIncomingRematch ? (
+							<>
+								<p className="w-full text-sm text-slate-300">{rematchRequestFrom} wants a rematch. Start a new game?</p>
+								<button
+									type="button"
+									onClick={onAcceptRematch}
+									className="rounded bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+								>
+									Accept rematch
+								</button>
+								<button
+									type="button"
+									onClick={onDeclineRematch}
+									className="rounded bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700"
+								>
+									Decline
+								</button>
+							</>
+						) : (
+							<button
+								type="button"
+								onClick={onNewGame}
+								disabled={isWaitingRematchResponse}
+								className="rounded bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70"
+							>
+								{isWaitingRematchResponse ? "Waiting for response..." : "Rematch"}
+							</button>
+						)}
+						<button
+							type="button"
+							onClick={onExit}
+							className="rounded bg-slate-700 px-3 py-2 text-sm font-medium text-white hover:bg-slate-600"
+						>
+							Exit
+						</button>
+					</div>
+				</div>
+			</div>
+		) : null}
+		</>
 	);
 }
