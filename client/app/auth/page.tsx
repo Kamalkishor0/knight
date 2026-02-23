@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
-import { AUTH_TOKEN_STORAGE_KEY } from "@/lib/auth";
+import { setStoredAuthToken } from "@/lib/auth";
 import { API_BASE_URL } from "@/lib/runtime-config";
 
 const API_URL = API_BASE_URL;
@@ -88,9 +88,9 @@ export default function AuthPage() {
 				return;
 			}
 
-			window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, data.token);
+			setStoredAuthToken(data.token);
 			setStatus("Authentication successful. Redirecting...");
-			router.push("/friends");
+			router.push("/home");
 		} catch {
 			setStatus("Could not reach server.");
 		} finally {

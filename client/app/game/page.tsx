@@ -18,7 +18,13 @@ const SOCKET_URL = SOCKET_BASE_URL;
 
 export default function GamePage() {
 	const router = useRouter();
-	const [requestedRoomId, setRequestedRoomId] = useState("");
+	const [requestedRoomId] = useState(() => {
+		if (typeof window === "undefined") {
+			return "";
+		}
+
+		return (new URLSearchParams(window.location.search).get("room") || "").trim().toUpperCase();
+	});
 
 	const token = useStoredAuthToken();
 	const [connected, setConnected] = useState(false);
@@ -43,17 +49,6 @@ export default function GamePage() {
 			router.replace("/auth");
 		}
 	}, [router, token]);
-
-	useEffect(() => {
-		const roomFromQuery = new URLSearchParams(window.location.search).get("room");
-		setRequestedRoomId((roomFromQuery || "").trim().toUpperCase());
-	}, []);
-
-	useEffect(() => {
-		if (requestedRoomId) {
-			setRoomIdInput(requestedRoomId);
-		}
-	}, [requestedRoomId]);
 
 	const myUserId = useMemo(() => (token ? parseUserIdFromToken(token) : null), [token]);
 
@@ -556,7 +551,7 @@ export default function GamePage() {
 
 	function handleExitAfterGame() {
 		leaveCurrentRoom(() => {
-			router.push("/friends");
+			router.push("/home");
 		});
 	}
 
@@ -642,7 +637,7 @@ export default function GamePage() {
 					status={status}
 					connected={connected}
 					hasRoom={Boolean(currentRoom)}
-					onBackToFriends={() => router.push("/friends")}
+					onBackToFriends={() => router.push("/home")}
 					onLeaveRoom={handleLeaveRoom}
 				/>
 

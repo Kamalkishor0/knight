@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { NavBar } from "@/components/NavBar";
 import { FormEvent, useEffect, useState } from "react";
 import { clearStoredAuthToken, useStoredAuthToken } from "@/lib/auth";
 import { connectSocket, disconnectSocket, getSocket } from "@/lib/socket";
@@ -35,9 +36,10 @@ type ReceivedInvite = {
 	receivedAt: string;
 };
 
-export default function FriendsPage() {
+export default function HomePage() {
 	const router = useRouter();
 	const token = useStoredAuthToken();
+	const [hasHydrated, setHasHydrated] = useState(false);
 	const [friendUsername, setFriendUsername] = useState("");
 	const [friends, setFriends] = useState<Friend[]>([]);
 	const [incoming, setIncoming] = useState<IncomingRequest[]>([]);
@@ -48,10 +50,14 @@ export default function FriendsPage() {
 	const [status, setStatus] = useState("");
 
 	useEffect(() => {
-		if (!token) {
+		setHasHydrated(true);
+	}, []);
+
+	useEffect(() => {
+		if (hasHydrated && !token) {
 			router.replace("/auth");
 		}
-	}, [router, token]);
+	}, [hasHydrated, router, token]);
 
 	async function authFetch(path: string, init?: RequestInit) {
 		const response = await fetch(`${API_URL}${path}`, {
@@ -253,14 +259,22 @@ export default function FriendsPage() {
 		}
 	}
 
-	function handleLogout() {
+	async function handleLogout() {
+		router.replace("/auth");
 		disconnectSocket();
 		clearStoredAuthToken();
-		router.replace("/auth");
+	}
+
+	if (!hasHydrated) {
+		return null;
 	}
 
 	if (!token) {
-		return null;
+		return (
+			<main className="min-h-screen bg-slate-900 px-6 py-10 text-slate-100 flex items-center justify-center">
+				<p className="text-sm text-slate-300">Redirecting to authentication...</p>
+			</main>
+		);
 	}
 
 	const onlineFriendsCount = friends.filter((friend) => onlineUserIds.has(friend.id)).length;
@@ -268,23 +282,9 @@ export default function FriendsPage() {
 	return (
 		<main className="min-h-screen bg-slate-900 px-6 py-10 text-slate-100 flex items-center justify-center">
 			<div className="mx-auto grid w-full max-w-4xl gap-4">
-				<header className="rounded-2xl border border-slate-700 bg-slate-800 p-5 shadow-lg shadow-black/20">
-					<div className="flex items-center justify-between gap-3">
-						<div>
-							<h1 className="text-2xl font-semibold">Friends</h1>
-							<p className="text-sm text-slate-300">Send requests by username and accept incoming requests.</p>
-						</div>
-						<button
-							type="button"
-							onClick={handleLogout}
-							className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700"
-						>
-							Logout
-						</button>
-					</div>
-					{status ? <p className="mt-3 text-sm text-slate-300">{status}</p> : null}
-				</header>
-
+				<NavBar onLogout={handleLogout} />
+				{status ? <p className="rounded-md border border-slate-700 bg-slate-800/70 px-3 py-2 text-sm text-slate-200">{status}</p> : null}
+				
 				<section className="rounded-2xl border border-slate-700 bg-slate-800 p-5 shadow-lg shadow-black/20">
 					<h2 className="text-lg font-medium">Add friend</h2>
 					<form onSubmit={handleAddFriend} className="mt-3 flex gap-2">
