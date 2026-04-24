@@ -3,11 +3,23 @@ import { Chess } from "chess.js";
 import type { GameSnapshot, Room, RoomState, TypedServer, TypedSocket } from "./chess.types.js";
 
 export const INITIAL_CLOCK_MS = 3 * 60 * 1000;
+export const GAME_START_COUNTDOWN_SECONDS = 5;
 
 export const rooms = new Map<string, Room>();
 export const roomByUserId = new Map<string, string>();
 export const socketsByUserId = new Map<string, Set<string>>();
 export const onlineUsers = new Map<string, { userId: string; username: string }>();
+export const roomStartCountdownByRoomId = new Map<string, NodeJS.Timeout>();
+export const pendingInvites = new Map<
+  string,
+  {
+    inviteId: string;
+    fromUserId: string;
+    fromUsername: string;
+    toUserId: string;
+    createdAt: number;
+  }
+>();
 
 function applyActiveClock(game: NonNullable<Room["game"]>) {
   if (!game.lastTickAt) {
@@ -53,6 +65,14 @@ export function isUserOnline(userId: string): boolean {
   return Boolean(sockets && sockets.size > 0);
 }
 
+function hasTwoOnlinePlayers(room: Room): boolean {
+  if (room.players.size !== 2) {
+    return false;
+  }
+
+  return Array.from(room.players.keys()).every((userId) => isUserOnline(userId));
+}
+
 export function getRoomState(room: Room): RoomState {
   const colorByUserId = room.game
     ? new Map<string, "w" | "b">([
@@ -71,7 +91,7 @@ export function getRoomState(room: Room): RoomState {
   return {
     roomId: room.id,
     players,
-    status: room.game ? "playing" : players.length === 2 ? "ready" : "waiting",
+    status: room.game ? "playing" : hasTwoOnlinePlayers(room) ? "ready" : "waiting",
   };
 }
 
@@ -164,9 +184,19 @@ export function broadcastGameState(io: TypedServer, roomId: string) {
   }
 }
 
-export function maybeStartGame(io: TypedServer, roomId: string) {
+export function clearRoomStartCountdown(roomId: string) {
+  const timer = roomStartCountdownByRoomId.get(roomId);
+  if (!timer) {
+    return;
+  }
+
+  clearInterval(timer);
+  roomStartCountdownByRoomId.delete(roomId);
+}
+
+function startGameNow(io: TypedServer, roomId: string) {
   const room = rooms.get(roomId);
-  if (!room || room.players.size !== 2 || room.game) {
+  if (!room || room.game || !hasTwoOnlinePlayers(room)) {
     return;
   }
 
@@ -205,6 +235,45 @@ export function maybeStartGame(io: TypedServer, roomId: string) {
   broadcastRoomState(io, roomId);
 }
 
+export function maybeStartGame(io: TypedServer, roomId: string, options?: { skipCountdown?: boolean }) {
+  const room = rooms.get(roomId);
+  if (!room || room.game || !hasTwoOnlinePlayers(room)) {
+    return;
+  }
+
+  if (options?.skipCountdown) {
+    clearRoomStartCountdown(roomId);
+    startGameNow(io, roomId);
+    return;
+  }
+
+  if (roomStartCountdownByRoomId.has(roomId)) {
+    return;
+  }
+
+  let secondsRemaining = GAME_START_COUNTDOWN_SECONDS;
+  io.to(roomId).emit("game:countdown", { roomId, secondsRemaining });
+
+  const timer = setInterval(() => {
+    const latestRoom = rooms.get(roomId);
+    if (!latestRoom || latestRoom.game || !hasTwoOnlinePlayers(latestRoom)) {
+      clearRoomStartCountdown(roomId);
+      return;
+    }
+
+    secondsRemaining -= 1;
+    if (secondsRemaining > 0) {
+      io.to(roomId).emit("game:countdown", { roomId, secondsRemaining });
+      return;
+    }
+
+    clearRoomStartCountdown(roomId);
+    startGameNow(io, roomId);
+  }, 1000);
+
+  roomStartCountdownByRoomId.set(roomId, timer);
+}
+
 export function leaveRoom(io: TypedServer, socket: TypedSocket, userId: string, reason?: string) {
   const roomId = roomByUserId.get(userId);
   if (!roomId) {
@@ -225,7 +294,56 @@ export function leaveRoom(io: TypedServer, socket: TypedSocket, userId: string, 
     room.game = undefined;
   }
 
+  if (room.players.size < 2) {
+    clearRoomStartCountdown(roomId);
+  }
+
   if (room.players.size === 0) {
+    clearRoomStartCountdown(roomId);
+    rooms.delete(roomId);
+    return;
+  }
+
+  if (reason) {
+    io.to(roomId).emit("room:error", { message: reason });
+  }
+
+  broadcastRoomState(io, roomId);
+}
+
+export function removeUserFromRoom(io: TypedServer, userId: string, reason?: string) {
+  const roomId = roomByUserId.get(userId);
+  if (!roomId) {
+    return;
+  }
+
+  const room = rooms.get(roomId);
+  roomByUserId.delete(userId);
+
+  const socketIds = socketsByUserId.get(userId);
+  if (socketIds) {
+    for (const socketId of socketIds) {
+      const userSocket = io.sockets.sockets.get(socketId);
+      userSocket?.leave(roomId);
+    }
+  }
+
+  if (!room) {
+    return;
+  }
+
+  room.players.delete(userId);
+
+  if (room.game && (room.game.whiteUserId === userId || room.game.blackUserId === userId)) {
+    room.game = undefined;
+  }
+
+  if (room.players.size < 2) {
+    clearRoomStartCountdown(roomId);
+  }
+
+  if (room.players.size === 0) {
+    clearRoomStartCountdown(roomId);
     rooms.delete(roomId);
     return;
   }

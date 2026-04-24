@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Chess, type PieceSymbol } from "chess.js";
 import prisma from "../db.js";
 import { verifyToken } from "../utils/jwt.js";
@@ -13,11 +14,208 @@ import {
   maybeStartGame,
   normalizeRoomId,
   onlineUsers,
+  pendingInvites,
+  removeUserFromRoom,
   roomByUserId,
   rooms,
   socketsByUserId,
 } from "./chess.state.js";
 import type { MoveResult, Room, TypedServer } from "./chess.types.js";
+
+const INVITE_TTL_MS = 10 * 60 * 1000;
+const MATCHMAKING_TIMEOUT_MS = 60 * 1000;
+const MATCHMAKING_GAME_START_DELAY_MS = 1500;
+
+type MatchmakingEntry = {
+  userId: string;
+  username: string;
+  expiresAt: number;
+};
+
+const matchmakingQueue: MatchmakingEntry[] = [];
+const matchmakingTimeoutByUserId = new Map<string, NodeJS.Timeout>();
+
+function cleanupExpiredInvites() {
+  const now = Date.now();
+
+  for (const [inviteId, invite] of pendingInvites.entries()) {
+    if (now - invite.createdAt > INVITE_TTL_MS) {
+      pendingInvites.delete(inviteId);
+    }
+  }
+}
+
+function emitToUser(io: TypedServer, userId: string, event: "matchmaking:status" | "matchmaking:found", payload: unknown) {
+  const socketIds = socketsByUserId.get(userId);
+  if (!socketIds) {
+    return;
+  }
+
+  for (const socketId of socketIds) {
+    io.to(socketId).emit(event, payload as never);
+  }
+}
+
+function clearMatchmakingTimeout(userId: string) {
+  const timer = matchmakingTimeoutByUserId.get(userId);
+  if (!timer) {
+    return;
+  }
+
+  clearTimeout(timer);
+  matchmakingTimeoutByUserId.delete(userId);
+}
+
+function removeFromMatchmaking(
+  io: TypedServer,
+  userId: string,
+  options?: { emitStatus?: { status: "timeout" | "cancelled"; message: string } },
+) {
+  const index = matchmakingQueue.findIndex((entry) => entry.userId === userId);
+  if (index !== -1) {
+    matchmakingQueue.splice(index, 1);
+  }
+
+  clearMatchmakingTimeout(userId);
+
+  if (options?.emitStatus) {
+    emitToUser(io, userId, "matchmaking:status", {
+      status: options.emitStatus.status,
+      message: options.emitStatus.message,
+    });
+  }
+}
+
+function scheduleMatchmakingTimeout(io: TypedServer, entry: MatchmakingEntry) {
+  clearMatchmakingTimeout(entry.userId);
+
+  const waitMs = Math.max(0, entry.expiresAt - Date.now());
+  const timer = setTimeout(() => {
+    const queued = matchmakingQueue.some((item) => item.userId === entry.userId);
+    if (!queued) {
+      clearMatchmakingTimeout(entry.userId);
+      return;
+    }
+
+    removeFromMatchmaking(io, entry.userId, {
+      emitStatus: {
+        status: "timeout",
+        message: "No opponent found in 1 minute. Click Play to try again.",
+      },
+    });
+  }, waitMs);
+
+  matchmakingTimeoutByUserId.set(entry.userId, timer);
+}
+
+function pullNextMatchmakingCandidate(io: TypedServer): MatchmakingEntry | null {
+  while (matchmakingQueue.length > 0) {
+    const candidate = matchmakingQueue.shift();
+    if (!candidate) {
+      return null;
+    }
+
+    clearMatchmakingTimeout(candidate.userId);
+
+    const isExpired = candidate.expiresAt <= Date.now();
+    if (isExpired) {
+      emitToUser(io, candidate.userId, "matchmaking:status", {
+        status: "timeout",
+        message: "No opponent found in 1 minute. Click Play to try again.",
+      });
+      continue;
+    }
+
+    if (!isUserOnline(candidate.userId) || roomByUserId.has(candidate.userId)) {
+      continue;
+    }
+
+    return candidate;
+  }
+
+  return null;
+}
+
+function createMatchRoom(io: TypedServer, first: MatchmakingEntry, second: MatchmakingEntry) {
+  removeUserFromRoom(io, first.userId);
+  removeUserFromRoom(io, second.userId);
+
+  let roomId = normalizeRoomId();
+  while (rooms.has(roomId)) {
+    roomId = normalizeRoomId();
+  }
+
+  const room: Room = {
+    id: roomId,
+    players: new Map([
+      [first.userId, { userId: first.userId, username: first.username }],
+      [second.userId, { userId: second.userId, username: second.username }],
+    ]),
+  };
+
+  rooms.set(roomId, room);
+  roomByUserId.set(first.userId, roomId);
+  roomByUserId.set(second.userId, roomId);
+
+  const firstSocketIds = socketsByUserId.get(first.userId);
+  if (firstSocketIds) {
+    for (const socketId of firstSocketIds) {
+      const firstSocket = io.sockets.sockets.get(socketId);
+      firstSocket?.join(roomId);
+    }
+  }
+
+  const secondSocketIds = socketsByUserId.get(second.userId);
+  if (secondSocketIds) {
+    for (const socketId of secondSocketIds) {
+      const secondSocket = io.sockets.sockets.get(socketId);
+      secondSocket?.join(roomId);
+    }
+  }
+
+  const state = getRoomState(room);
+  io.to(roomId).emit("room:state", state);
+
+  emitToUser(io, first.userId, "matchmaking:status", {
+    status: "matched",
+    message: `Match found with ${second.username}. Game starts in a moment...`,
+  });
+  emitToUser(io, second.userId, "matchmaking:status", {
+    status: "matched",
+    message: `Match found with ${first.username}. Game starts in a moment...`,
+  });
+
+  emitToUser(io, first.userId, "matchmaking:found", {
+    roomId,
+    opponent: { userId: second.userId, username: second.username },
+  });
+  emitToUser(io, second.userId, "matchmaking:found", {
+    roomId,
+    opponent: { userId: first.userId, username: first.username },
+  });
+
+  setTimeout(() => {
+    maybeStartGame(io, roomId);
+  }, MATCHMAKING_GAME_START_DELAY_MS);
+}
+
+function attemptMatchmaking(io: TypedServer) {
+  while (matchmakingQueue.length >= 2) {
+    const first = pullNextMatchmakingCandidate(io);
+    if (!first) {
+      return;
+    }
+
+    const second = pullNextMatchmakingCandidate(io);
+    if (!second) {
+      matchmakingQueue.unshift(first);
+      scheduleMatchmakingTimeout(io, first);
+      return;
+    }
+
+    createMatchRoom(io, first, second);
+  }
+}
 
 async function areFriends(userIdA: string, userIdB: string): Promise<boolean> {
   const friendship = await prisma.friendship.findFirst({
@@ -78,7 +276,7 @@ function startRematch(io: TypedServer, roomId: string) {
     status: "started",
     message: "Rematch accepted. Starting a new game.",
   });
-  maybeStartGame(io, roomId);
+  maybeStartGame(io, roomId, { skipCountdown: true });
   return true;
 }
 
@@ -114,11 +312,62 @@ export function registerChessGateway(io: TypedServer) {
       socket.join(existingRoomId);
       broadcastRoomState(io, existingRoomId);
       broadcastGameState(io, existingRoomId);
+      maybeStartGame(io, existingRoomId);
     }
 
     broadcastOnlineUsers(io);
 
+    socket.on("matchmaking:join", (callback) => {
+      if (roomByUserId.has(userId)) {
+        callback({ ok: false, error: "You are already in a room" });
+        return;
+      }
+
+      const existing = matchmakingQueue.find((entry) => entry.userId === userId);
+      if (existing) {
+        callback({ ok: true, data: { status: "searching", expiresAt: existing.expiresAt } });
+        return;
+      }
+
+      const entry: MatchmakingEntry = {
+        userId,
+        username,
+        expiresAt: Date.now() + MATCHMAKING_TIMEOUT_MS,
+      };
+
+      matchmakingQueue.push(entry);
+      scheduleMatchmakingTimeout(io, entry);
+
+      emitToUser(io, userId, "matchmaking:status", {
+        status: "searching",
+        message: "Searching for an opponent...",
+        expiresAt: entry.expiresAt,
+      });
+
+      callback({ ok: true, data: { status: "searching", expiresAt: entry.expiresAt } });
+      attemptMatchmaking(io);
+    });
+
+    socket.on("matchmaking:cancel", (callback) => {
+      const isQueued = matchmakingQueue.some((entry) => entry.userId === userId);
+      if (!isQueued) {
+        callback({ ok: false, error: "You are not in matchmaking" });
+        return;
+      }
+
+      removeFromMatchmaking(io, userId, {
+        emitStatus: {
+          status: "cancelled",
+          message: "Matchmaking cancelled.",
+        },
+      });
+
+      callback({ ok: true });
+    });
+
     socket.on("room:create", (payload, callback) => {
+      removeFromMatchmaking(io, userId);
+
       if (roomByUserId.has(userId)) {
         callback({ ok: false, error: "You are already in a room" });
         return;
@@ -146,6 +395,8 @@ export function registerChessGateway(io: TypedServer) {
     });
 
     socket.on("room:join", ({ roomId }, callback) => {
+      removeFromMatchmaking(io, userId);
+
       const normalizedRoomId = normalizeRoomId(roomId);
       const room = rooms.get(normalizedRoomId);
 
@@ -536,6 +787,9 @@ export function registerChessGateway(io: TypedServer) {
     });
 
     socket.on("invite:send", async (payload, callback) => {
+      cleanupExpiredInvites();
+      removeFromMatchmaking(io, userId);
+
       const toUserId = payload.toUserId?.trim();
       if (!toUserId) {
         callback({ ok: false, error: "Missing target user" });
@@ -548,16 +802,6 @@ export function registerChessGateway(io: TypedServer) {
       }
 
       const roomId = payload.roomId ? normalizeRoomId(payload.roomId) : roomByUserId.get(userId);
-      if (!roomId) {
-        callback({ ok: false, error: "Create or join a room first" });
-        return;
-      }
-
-      const room = rooms.get(roomId);
-      if (!room || !room.players.has(userId)) {
-        callback({ ok: false, error: "You are not in that room" });
-        return;
-      }
 
       const friend = await areFriends(userId, toUserId);
       if (!friend) {
@@ -570,23 +814,118 @@ export function registerChessGateway(io: TypedServer) {
         return;
       }
 
-      const inviteLink = `${socket.handshake.headers.origin || "http://localhost:3000"}/?room=${encodeURIComponent(roomId)}`;
+      const inviteId = randomUUID();
+      pendingInvites.set(inviteId, {
+        inviteId,
+        fromUserId: userId,
+        fromUsername: username,
+        toUserId,
+        createdAt: Date.now(),
+      });
+
+      const inviteLink = `${socket.handshake.headers.origin || "http://localhost:3000"}/home?invite=${encodeURIComponent(inviteId)}`;
 
       const friendSocketIds = socketsByUserId.get(toUserId);
       if (friendSocketIds) {
         for (const socketId of friendSocketIds) {
           io.to(socketId).emit("invite:received", {
             from: { userId, username },
-            roomId,
+            inviteId,
+            roomId: roomId || "",
             inviteLink,
           });
         }
       }
 
-      callback({ ok: true, data: { roomId, inviteLink } });
+      callback({ ok: true, data: { inviteId, roomId: roomId || undefined, inviteLink } });
+    });
+
+    socket.on("invite:accept", async (payload, callback) => {
+      cleanupExpiredInvites();
+
+      const inviteId = payload.inviteId?.trim();
+      if (!inviteId) {
+        callback({ ok: false, error: "Missing invite id" });
+        return;
+      }
+
+      const invite = pendingInvites.get(inviteId);
+      if (!invite) {
+        callback({ ok: false, error: "Invite is invalid or expired" });
+        return;
+      }
+
+      if (invite.toUserId !== userId) {
+        callback({ ok: false, error: "This invite is not for you" });
+        return;
+      }
+
+      if (!isUserOnline(invite.fromUserId)) {
+        callback({ ok: false, error: "Friend is offline" });
+        return;
+      }
+
+      const friend = await areFriends(userId, invite.fromUserId);
+      if (!friend) {
+        callback({ ok: false, error: "Invite sender is no longer in your friend list" });
+        return;
+      }
+
+      const inviterUsername = onlineUsers.get(invite.fromUserId)?.username || invite.fromUsername;
+
+      removeFromMatchmaking(io, invite.fromUserId);
+      removeFromMatchmaking(io, userId);
+      removeUserFromRoom(io, invite.fromUserId);
+      removeUserFromRoom(io, userId);
+
+      let roomId = normalizeRoomId();
+      while (rooms.has(roomId)) {
+        roomId = normalizeRoomId();
+      }
+
+      const room: Room = {
+        id: roomId,
+        players: new Map([
+          [invite.fromUserId, { userId: invite.fromUserId, username: inviterUsername }],
+          [userId, { userId, username }],
+        ]),
+      };
+
+      rooms.set(roomId, room);
+      roomByUserId.set(invite.fromUserId, roomId);
+      roomByUserId.set(userId, roomId);
+
+      const inviterSocketIds = socketsByUserId.get(invite.fromUserId);
+      if (inviterSocketIds) {
+        for (const socketId of inviterSocketIds) {
+          const inviterSocket = io.sockets.sockets.get(socketId);
+          inviterSocket?.join(roomId);
+        }
+      }
+
+      socket.join(roomId);
+      pendingInvites.delete(inviteId);
+
+      if (inviterSocketIds) {
+        for (const socketId of inviterSocketIds) {
+          io.to(socketId).emit("invite:accepted", {
+            inviteId,
+            roomId,
+            acceptedBy: { userId, username },
+          });
+        }
+      }
+
+      const state = getRoomState(room);
+      io.to(roomId).emit("room:state", state);
+      maybeStartGame(io, roomId);
+
+      callback({ ok: true, data: state });
     });
 
     socket.on("disconnect", () => {
+      removeFromMatchmaking(io, userId);
+
       const sockets = socketsByUserId.get(userId);
       if (sockets) {
         sockets.delete(socket.id);

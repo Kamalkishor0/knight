@@ -16,6 +16,7 @@ type BoardPanelProps = {
 	legalTargets: string[];
 	files: string[];
 	ranks: number[];
+	countdownSeconds: number | null;
 	onSquareClick: (square: string) => void;
 	onNewGame: () => void;
 	onAcceptRematch: () => void;
@@ -40,6 +41,7 @@ export function BoardPanel({
 	legalTargets,
 	files,
 	ranks,
+	countdownSeconds,
 	onSquareClick,
 	onNewGame,
 	onAcceptRematch,
@@ -83,11 +85,22 @@ export function BoardPanel({
 
 	return (
 		<>
-		<div className="rounded-2xl border border-slate-700 bg-slate-800 p-5 shadow-lg shadow-black/20">
-			<h2 className="text-lg font-medium">Board</h2>
-			<p className="mt-1 text-sm text-slate-300">You are: {myColor === "w" ? "White" : myColor === "b" ? "Black" : "Spectator"}</p>
+			{countdownSeconds !== null ? (
+				<div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-4 backdrop-blur-2xl backdrop-saturate-150 supports-backdrop-filter:bg-slate-950/45">
+					<p
+						style={{ fontSize: "clamp(100px, 50vw, 500px)", fontWeight: 900 }}
+						className="tabular-nums leading-none text-emerald-200 drop-shadow-[0_14px_26px_rgba(16,185,129,0.55)]"
+					>
+						{countdownSeconds}
+					</p>
+				</div>
+			) : null}
 
-			{!isGameOver && myColor ? (
+			<div className="rounded-2xl border border-slate-700 bg-slate-800 p-5 shadow-lg shadow-black/20">
+				<h2 className="text-lg font-medium">Board</h2>
+				<p className="mt-1 text-sm text-slate-300">You are: {myColor === "w" ? "White" : myColor === "b" ? "Black" : "Spectator"}</p>
+
+				{!isGameOver && myColor ? (
 				<div className="mt-3 flex flex-wrap items-center gap-2">
 					{showIncomingDraw ? (
 						<>

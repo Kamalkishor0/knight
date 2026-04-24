@@ -64,17 +64,39 @@ export type DrawStatusEvent = {
   message: string;
   by?: { userId: string; username: string };
 };
+
+export type InviteAcceptedEvent = {
+  inviteId: string;
+  roomId: string;
+  acceptedBy: { userId: string; username: string };
+};
+
+export type MatchmakingStatusEvent = {
+  status: "searching" | "matched" | "timeout" | "cancelled";
+  message: string;
+  expiresAt?: number;
+};
+
+export type MatchFoundEvent = {
+  roomId: string;
+  opponent: { userId: string; username: string };
+};
 export type ClientToServerEvents = {
   "room:create": (payload: { roomId?: string }, callback: (response: Ack<RoomState>) => void) => void;
   "room:join": (payload: { roomId: string }, callback: (response: Ack<RoomState>) => void) => void;
   "room:leave": (callback: (response: Ack) => void) => void;
+  "matchmaking:join": (
+    callback: (response: Ack<{ status: "searching"; expiresAt: number }>) => void,
+  ) => void;
+  "matchmaking:cancel": (callback: (response: Ack) => void) => void;
   "room:state": (callback: (response: Ack<RoomState>) => void) => void;
   "game:state": (callback: (response: Ack<GameSnapshot>) => void) => void;
   "chess:move": (payload: MovePayload, callback: (response: Ack<MoveResult>) => void) => void;
   "invite:send": (
     payload: { toUserId: string; roomId?: string },
-    callback: (response: Ack<{ inviteLink: string; roomId: string }>) => void,
+    callback: (response: Ack<{ inviteId: string; inviteLink: string; roomId?: string }>) => void,
   ) => void;
+  "invite:accept": (payload: { inviteId: string }, callback: (response: Ack<RoomState>) => void) => void;
   "game:rematch:request": (callback: (response: Ack<{ waitingFor?: string; started?: boolean }>) => void) => void;
 	"game:rematch:respond": (payload: { accept: boolean }, callback: (response: Ack<{ started?: boolean }>) => void) => void;
   "game:draw:request": (callback: (response: Ack<{ waitingFor?: string; accepted?: boolean }>) => void) => void;
@@ -84,6 +106,9 @@ export type ClientToServerEvents = {
 export type ServerToClientEvents = {
   "presence:online": (users: Array<{ userId: string; username: string }>) => void;
   "room:state": (room: RoomState) => void;
+  "matchmaking:status": (payload: MatchmakingStatusEvent) => void;
+  "matchmaking:found": (payload: MatchFoundEvent) => void;
+  "game:countdown": (payload: { roomId: string; secondsRemaining: number }) => void;
   "game:start": (payload: {
     roomId: string;
     white: { userId: string; username: string };
@@ -99,9 +124,11 @@ export type ServerToClientEvents = {
   "game:rematch:status": (payload: RematchStatusEvent) => void;
   "invite:received": (payload: {
     from: { userId: string; username: string };
+    inviteId: string;
     roomId: string;
     inviteLink: string;
   }) => void;
+  "invite:accepted": (payload: InviteAcceptedEvent) => void;
   "game:draw:requested": (payload: DrawRequestEvent) => void;
   "game:draw:status": (payload: DrawStatusEvent) => void;
 };

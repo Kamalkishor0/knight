@@ -79,7 +79,7 @@ export async function login(req: Request, res: Response) {
     return;
   }
   if(!email && !username) {
-    res.status(400).json({ message: "email or username is required" });
+    res.status(400).json({ message: "email and username is required" });
     return;
   }
   let user = null;
