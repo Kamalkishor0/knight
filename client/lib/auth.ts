@@ -1,4 +1,22 @@
 import { useSyncExternalStore } from "react";
+import { createClient } from "@supabase/supabase-js";
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+	throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY.");
+}
+
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+export async function signInWithOauth(redirectTo?: string) {
+	await supabase.auth.signInWithOAuth({
+		provider: "google",
+		options: redirectTo ? { redirectTo } : undefined,
+	});
+}
+
 
 export const AUTH_TOKEN_STORAGE_KEY = "knight-auth-token";
 const AUTH_TOKEN_CHANGE_EVENT = "knight-auth-token-change";

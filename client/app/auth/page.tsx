@@ -1,10 +1,9 @@
 "use client";
-
 import { useRouter } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
 import { setStoredAuthToken } from "@/lib/auth";
 import { API_BASE_URL } from "@/lib/runtime-config";
-
+import { signInWithOauth } from "@/lib/auth";
 const API_URL = API_BASE_URL;
 
 type AuthMode = "login" | "signup";
@@ -25,11 +24,11 @@ export default function AuthPage() {
 	const router = useRouter();
 	const [mode, setMode] = useState<AuthMode>("login");
 	const [usernameOrEmail, setUsernameOrEmail] = useState("");
-	const [username, setUsername] = useState("");
 	const [email, setEmail] = useState("");
 	const [password, setPassword] = useState("");
 	const [confirmPassword, setConfirmPassword] = useState("");
 	const [loading, setLoading] = useState(false);
+	const [googleLoading, setGoogleLoading] = useState(false);
 	const [status, setStatus] = useState("");
 
 	const heading = useMemo(() => (mode === "login" ? "Log in to Knight" : "Create your Knight account"), [mode]);
@@ -44,8 +43,8 @@ export default function AuthPage() {
 		}
 
 		if (mode === "signup") {
-			if (!username.trim() || !email.trim()) {
-				setStatus("Username, email and password are required.");
+			if (!email.trim()) {
+				setStatus("Email and password are required.");
 				return;
 			}
 
@@ -70,7 +69,6 @@ export default function AuthPage() {
 							: { username: usernameOrEmail.trim().toLowerCase() }),
 					}
 					: {
-						username: username.trim().toLowerCase(),
 						email: email.trim().toLowerCase(),
 						password,
 					};
@@ -89,12 +87,29 @@ export default function AuthPage() {
 			}
 
 			setStoredAuthToken(data.token);
+			if (mode === "signup") {
+				setStatus("Account created. Set your username next.");
+				router.push("/auth/username");
+				return;
+			}
+
 			setStatus("Authentication successful. Redirecting...");
 			router.push("/home");
 		} catch {
 			setStatus("Could not reach server.");
 		} finally {
 			setLoading(false);
+		}
+	}
+
+	async function handleGoogleSignIn() {
+		setStatus("");
+		setGoogleLoading(true);
+		try {
+			await signInWithOauth(`${window.location.origin}/auth/username`);
+		} catch {
+			setStatus("Could not start Google sign in.");
+			setGoogleLoading(false);
 		}
 	}
 
@@ -134,20 +149,10 @@ export default function AuthPage() {
 					{mode === "signup" ? (
 						<>
 							<input
-								type="text"
-								name="username"
-								autoComplete="username"
-								placeholder="Username"
-								className="w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100 placeholder:text-slate-400"
-								value={username}
-								onChange={(event) => setUsername(event.target.value)}
-								required
-							/>
-							<input
 								type="email"
 								name="email"
 								autoComplete="email"
-								placeholder="Email"
+								placeholder="Email address"
 								className="w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100 placeholder:text-slate-400"
 								value={email}
 								onChange={(event) => setEmail(event.target.value)}
@@ -196,9 +201,30 @@ export default function AuthPage() {
 						disabled={loading}
 						className="w-full rounded-md bg-slate-900 px-3 py-2 font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-70"
 					>
-						{loading ? "Please wait..." : mode === "login" ? "Log in" : "Create account"}
+						{loading ? "Please wait..." : mode === "login" ? "Log in" : "Create Account"}
 					</button>
+
+					{mode === "signup" ? (
+						<button
+							type="button"
+							disabled={googleLoading}
+							onClick={handleGoogleSignIn}
+							className="flex w-full items-center justify-center gap-2 rounded-md border border-slate-600 bg-slate-900 px-3 py-2 font-medium text-slate-100 transition hover:border-slate-500 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+						>
+							<svg aria-hidden="true" viewBox="0 0 48 48" className="h-6 w-6 shrink-0" fill="none">
+								<path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303C33.655 32.659 29.2 36 24 36c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.085 6.053 29.368 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.651-.389-3.917Z" />
+								<path fill="#FF3D00" d="M6.306 14.691 12.876 19.5C14.655 15.109 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.085 6.053 29.368 4 24 4 16.318 4 9.655 8.337 6.306 14.691Z" />
+								<path fill="#4CAF50" d="M24 44c5.259 0 9.883-2.018 13.409-5.302l-6.19-5.238C29.17 35.91 26.749 36.999 24 37c-5.179 0-9.62-3.29-11.303-7.923l-6.53 5.037C9.47 39.556 16.142 44 24 44Z" />
+								<path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303a11.99 11.99 0 0 1-4.084 5.46l.003-.002 6.19 5.238C36.971 39.421 44 34 44 24c0-1.341-.138-2.651-.389-3.917Z" />
+							</svg>
+							{googleLoading ? "Connecting to Google..." : "Continue with Google"}
+						</button>
+					) : null}
 				</form>
+
+				<p className="mt-3 text-xs leading-5 text-slate-400">
+					After signup or Google sign in, you will be asked to choose your username.
+				</p>
 
 				{status ? <p className="mt-4 text-sm text-slate-300">{status}</p> : null}
 			</div>

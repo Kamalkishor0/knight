@@ -1,0 +1,25 @@
+# Monorepo root hygiene
+# Prevent accidental root-level npm setup from being committed.
+/node_modules/
+/package-lock.json
+/package.json
+
+# Environment files
+.env
+.env.*
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Common build artifacts
+**/.next/
+**/dist/
+**/coverage/
+**/*.tsbuildinfo
