@@ -6,6 +6,9 @@ type BoardPanelProps = {
 	chess: Chess | null;
 	myColor: "w" | "b" | null;
 	gameState: GameSnapshot | null;
+	whiteUsername: string | null;
+	blackUsername: string | null;
+	opponentColor: "w" | "b" | null;
 	isGameOver: boolean;
 	rematchRequestFrom: string | null;
 	isWaitingRematchResponse: boolean;
@@ -24,6 +27,7 @@ type BoardPanelProps = {
 	onOfferDraw: () => void;
 	onAcceptDraw: () => void;
 	onDeclineDraw: () => void;
+	onAddOpponentAsFriend: () => void;
 	onExit: () => void;
 };
 
@@ -31,6 +35,9 @@ export function BoardPanel({
 	chess,
 	myColor,
 	gameState,
+	whiteUsername,
+	blackUsername,
+	opponentColor,
 	isGameOver,
 	rematchRequestFrom,
 	isWaitingRematchResponse,
@@ -49,6 +56,7 @@ export function BoardPanel({
 	onOfferDraw,
 	onAcceptDraw,
 	onDeclineDraw,
+	onAddOpponentAsFriend,
 	onExit,
 }: BoardPanelProps) {
 	const showIncomingRematch = Boolean(rematchRequestFrom);
@@ -139,16 +147,54 @@ export function BoardPanel({
 						gameState?.turn === "w" && gameState?.status === "active" ? "border-emerald-400 bg-emerald-900/30" : "border-slate-600"
 					}`}
 				>
-					<div className="font-medium">White</div>
-					<div className="font-mono text-lg">{formatClock(clockMs.w)}</div>
+					<div className="flex items-center justify-between gap-2">
+						<div className="font-medium">White</div>
+						<div className="w-8">
+							{opponentColor === "w" ? (
+								<button
+									type="button"
+									title="Add opponent as friend"
+									onClick={onAddOpponentAsFriend}
+									className="rounded p-1.5 text-slate-200 hover:bg-slate-700"
+								>
+									<svg viewBox="0 0 20 20" aria-hidden="true" className="h-5 w-5" fill="currentColor">
+										<path d="M10 3a3 3 0 1 1 0 6 3 3 0 0 1 0-6Zm-5 11a5 5 0 1 1 10 0v1H5v-1Zm11-7V5h-2v2h-2v2h2v2h2V9h2V7h-2Z" />
+									</svg>
+								</button>
+							) : null}
+						</div>
+					</div>
+					<div className="mt-1 flex items-center justify-between gap-2">
+						<div className="font-mono text-lg">{formatClock(clockMs.w)}</div>
+						<div className="truncate text-xs text-slate-300">{whiteUsername || "-"}</div>
+					</div>
 				</div>
 				<div
 					className={`rounded border px-3 py-2 ${
 						gameState?.turn === "b" && gameState?.status === "active" ? "border-emerald-400 bg-emerald-900/30" : "border-slate-600"
 					}`}
 				>
-					<div className="font-medium">Black</div>
-					<div className="font-mono text-lg">{formatClock(clockMs.b)}</div>
+					<div className="flex items-center justify-between gap-2">
+						<div className="font-medium">Black</div>
+						<div className="w-8">
+							{opponentColor === "b" ? (
+								<button
+									type="button"
+									title="Add opponent as friend"
+									onClick={onAddOpponentAsFriend}
+									className="rounded p-1.5 text-slate-200 hover:bg-slate-700"
+								>
+									<svg viewBox="0 0 20 20" aria-hidden="true" className="h-5 w-5" fill="currentColor">
+										<path d="M10 3a3 3 0 1 1 0 6 3 3 0 0 1 0-6Zm-5 11a5 5 0 1 1 10 0v1H5v-1Zm11-7V5h-2v2h-2v2h2v2h2V9h2V7h-2Z" />
+									</svg>
+								</button>
+							) : null}
+						</div>
+					</div>
+					<div className="mt-1 flex items-center justify-between gap-2">
+						<div className="font-mono text-lg">{formatClock(clockMs.b)}</div>
+						<div className="truncate text-xs text-slate-300">{blackUsername || "-"}</div>
+					</div>
 				</div>
 			</div>
 

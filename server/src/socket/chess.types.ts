@@ -94,6 +94,14 @@ export type MatchFoundEvent = {
   opponent: { userId: string; username: string };
 };
 
+export type ChatMessage = {
+  id: string;
+  roomId: string;
+  text: string;
+  createdAt: number;
+  by: { userId: string; username: string };
+};
+
 export type ClientToServerEvents = {
   "room:create": (payload: { roomId?: string }, callback: (response: Ack<RoomState>) => void) => void;
   "room:join": (payload: { roomId: string }, callback: (response: Ack<RoomState>) => void) => void;
@@ -114,6 +122,8 @@ export type ClientToServerEvents = {
   "game:rematch:respond": (payload: { accept: boolean }, callback: (response: Ack<{ started?: boolean }>) => void) => void;
   "game:draw:request": (callback: (response: Ack<{ waitingFor?: string; accepted?: boolean }>) => void) => void;
   "game:draw:respond": (payload: { accept: boolean }, callback: (response: Ack<{ accepted?: boolean }>) => void) => void;
+  "chat:history": (callback: (response: Ack<{ messages: ChatMessage[] }>) => void) => void;
+  "chat:send": (payload: { text: string; roomId?: string }, callback: (response: Ack<ChatMessage>) => void) => void;
 };
 
 export type ServerToClientEvents = {
@@ -144,6 +154,7 @@ export type ServerToClientEvents = {
     inviteLink: string;
   }) => void;
   "invite:accepted": (payload: InviteAcceptedEvent) => void;
+  "chat:new": (message: ChatMessage) => void;
 };
 
 export type InterServerEvents = Record<string, never>;

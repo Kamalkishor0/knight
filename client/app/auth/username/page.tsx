@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { useStoredAuthToken, setStoredAuthToken, clearStoredAuthToken, supabase } from "@/lib/auth";
 import { API_BASE_URL } from "@/lib/runtime-config";
@@ -9,8 +10,12 @@ const API_URL = API_BASE_URL;
 
 export default function UsernameSetupPage() {
 	const router = useRouter();
+	const searchParams = useSearchParams();
 	const token = useStoredAuthToken();
+	const fromGoogle = searchParams.get("from") === "google";
 	const [username, setUsername] = useState("");
+	const [password, setPassword] = useState("");
+	const [confirmPassword, setConfirmPassword] = useState("");
 	const [loading, setLoading] = useState(false);
 	const [bootstrapLoading, setBootstrapLoading] = useState(false);
 	const [status, setStatus] = useState("");
@@ -88,6 +93,23 @@ export default function UsernameSetupPage() {
 			return;
 		}
 
+		if (fromGoogle) {
+			if (!password.trim()) {
+				setStatus("Create a password to enable email login.");
+				return;
+			}
+
+			if (password.length < 8) {
+				setStatus("Password must be at least 8 characters.");
+				return;
+			}
+
+			if (password !== confirmPassword) {
+				setStatus("Passwords do not match.");
+				return;
+			}
+		}
+
 		setLoading(true);
 		try {
 			const response = await fetch(`${API_URL}/auth/username`, {
@@ -104,6 +126,24 @@ export default function UsernameSetupPage() {
 			if (!response.ok || !data || !data.token) {
 				setStatus(data?.message || "Could not save username.");
 				return;
+			}
+
+			if (fromGoogle) {
+				const passwordResponse = await fetch(`${API_URL}/auth/password`, {
+					method: "PATCH",
+					headers: {
+						"Content-Type": "application/json",
+						Authorization: `Bearer ${data.token}`,
+					},
+					body: JSON.stringify({ password }),
+				});
+
+				const passwordPayload = await passwordResponse.json().catch(() => null) as { message?: string } | null;
+
+				if (!passwordResponse.ok) {
+					setStatus(passwordPayload?.message || "Username saved, but could not set your password.");
+					return;
+				}
 			}
 
 			setStoredAuthToken(data.token);
@@ -134,6 +174,31 @@ export default function UsernameSetupPage() {
 						onChange={(event) => setUsername(event.target.value)}
 						required
 					/>
+
+					{fromGoogle ? (
+						<>
+							<input
+								type="password"
+								name="password"
+								autoComplete="new-password"
+								placeholder="Create a password"
+								className="w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100 placeholder:text-slate-400"
+								value={password}
+								onChange={(event) => setPassword(event.target.value)}
+								required
+							/>
+							<input
+								type="password"
+								name="confirmPassword"
+								autoComplete="new-password"
+								placeholder="Confirm password"
+								className="w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100 placeholder:text-slate-400"
+								value={confirmPassword}
+								onChange={(event) => setConfirmPassword(event.target.value)}
+								required
+							/>
+						</>
+					) : null}
 
 					<button
 						type="submit"

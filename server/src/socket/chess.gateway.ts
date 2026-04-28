@@ -20,7 +20,7 @@ import {
   rooms,
   socketsByUserId,
 } from "./chess.state.js";
-import type { MoveResult, Room, TypedServer } from "./chess.types.js";
+import type { ChatMessage, MoveResult, Room, TypedServer } from "./chess.types.js";
 
 const INVITE_TTL_MS = 10 * 60 * 1000;
 const MATCHMAKING_TIMEOUT_MS = 60 * 1000;
@@ -234,6 +234,20 @@ async function areFriends(userIdA: string, userIdB: string): Promise<boolean> {
 
 const rematchAcceptedByRoomId = new Map<string, Set<string>>();
 const drawOfferedByRoomId = new Map<string, string>();
+const roomChatByRoomId = new Map<string, ChatMessage[]>();
+const lastChatAtByUserId = new Map<string, number>();
+
+const MAX_CHAT_MESSAGES_PER_ROOM = 100;
+const MAX_CHAT_LENGTH = 300;
+const CHAT_COOLDOWN_MS = 500;
+
+function cleanupChatForDeletedRooms() {
+  for (const roomId of roomChatByRoomId.keys()) {
+    if (!rooms.has(roomId)) {
+      roomChatByRoomId.delete(roomId);
+    }
+  }
+}
 
 function getEndedGameRoom(roomId: string) {
   const room = rooms.get(roomId);
@@ -467,6 +481,87 @@ export function registerChessGateway(io: TypedServer) {
       callback({ ok: true, data: snapshot });
     });
 
+    socket.on("chat:history", (callback) => {
+      cleanupChatForDeletedRooms();
+
+      const roomId = roomByUserId.get(userId);
+      if (!roomId) {
+        callback({ ok: false, error: "You are not in a room" });
+        return;
+      }
+
+      const room = rooms.get(roomId);
+      if (!room) {
+        roomByUserId.delete(userId);
+        roomChatByRoomId.delete(roomId);
+        callback({ ok: false, error: "Room no longer exists" });
+        return;
+      }
+
+      const messages = roomChatByRoomId.get(roomId) ?? [];
+      callback({ ok: true, data: { messages } });
+    });
+
+    socket.on("chat:send", (payload, callback) => {
+      cleanupChatForDeletedRooms();
+
+      const roomId = roomByUserId.get(userId);
+      if (!roomId) {
+        callback({ ok: false, error: "You are not in a room" });
+        return;
+      }
+
+      const payloadRoomId = payload.roomId?.trim().toUpperCase();
+      if (payloadRoomId && payloadRoomId !== roomId) {
+        callback({ ok: false, error: "Invalid room" });
+        return;
+      }
+
+      const room = rooms.get(roomId);
+      if (!room || !room.players.has(userId)) {
+        callback({ ok: false, error: "Room not found" });
+        return;
+      }
+
+      const text = payload.text?.trim();
+      if (!text) {
+        callback({ ok: false, error: "Message cannot be empty" });
+        return;
+      }
+
+      if (text.length > MAX_CHAT_LENGTH) {
+        callback({ ok: false, error: `Message too long (max ${MAX_CHAT_LENGTH} characters)` });
+        return;
+      }
+
+      const now = Date.now();
+      const lastChatAt = lastChatAtByUserId.get(userId) ?? 0;
+      if (now - lastChatAt < CHAT_COOLDOWN_MS) {
+        callback({ ok: false, error: "You are sending messages too fast" });
+        return;
+      }
+
+      lastChatAtByUserId.set(userId, now);
+
+      const message: ChatMessage = {
+        id: randomUUID(),
+        roomId,
+        text,
+        createdAt: now,
+        by: { userId, username },
+      };
+
+      const existingMessages = roomChatByRoomId.get(roomId) ?? [];
+      existingMessages.push(message);
+      if (existingMessages.length > MAX_CHAT_MESSAGES_PER_ROOM) {
+        existingMessages.splice(0, existingMessages.length - MAX_CHAT_MESSAGES_PER_ROOM);
+      }
+      roomChatByRoomId.set(roomId, existingMessages);
+
+      io.to(roomId).emit("chat:new", message);
+      callback({ ok: true, data: message });
+    });
+
     socket.on("room:leave", (callback) => {
       if (!roomByUserId.has(userId)) {
         callback({ ok: false, error: "You are not in a room" });
@@ -480,6 +575,11 @@ export function registerChessGateway(io: TypedServer) {
       }
 
       leaveRoom(io, socket, userId, `${username} left the room`);
+
+      if (roomId && !rooms.has(roomId)) {
+        roomChatByRoomId.delete(roomId);
+      }
+
       callback({ ok: true });
     });
 
@@ -925,6 +1025,7 @@ export function registerChessGateway(io: TypedServer) {
 
     socket.on("disconnect", () => {
       removeFromMatchmaking(io, userId);
+      lastChatAtByUserId.delete(userId);
 
       const sockets = socketsByUserId.get(userId);
       if (sockets) {
@@ -943,6 +1044,7 @@ export function registerChessGateway(io: TypedServer) {
       }
 
       broadcastOnlineUsers(io);
+      cleanupChatForDeletedRooms();
     });
   });
 }

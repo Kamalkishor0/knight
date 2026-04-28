@@ -161,6 +161,46 @@ export async function setUsername(req: AuthenticatedRequest, res: Response) {
   res.json({ token, user });
 }
 
+export async function setPassword(req: AuthenticatedRequest, res: Response) {
+  if (!req.auth) {
+    res.status(401).json({ message: "Unauthorized" });
+    return;
+  }
+
+  const { password } = req.body as {
+    password?: string;
+  };
+
+  if (!password) {
+    res.status(400).json({ message: "password is required" });
+    return;
+  }
+
+  if (password.length < 8) {
+    res.status(400).json({ message: "Password must be at least 8 characters" });
+    return;
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: req.auth.userId },
+    select: { id: true },
+  });
+
+  if (!user) {
+    res.status(404).json({ message: "User not found" });
+    return;
+  }
+
+  const passwordHash = await bcrypt.hash(password, 12);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { password: passwordHash },
+  });
+
+  res.json({ message: "Password updated" });
+}
+
 export async function loginWithGoogle(req: Request, res: Response) {
   const { accessToken } = req.body as {
     accessToken?: string;

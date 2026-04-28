@@ -248,3 +248,33 @@ export async function rejectFriendRequest(req: AuthenticatedRequest, res: Respon
     },
   });
 }
+
+export async function removeFriend(req: AuthenticatedRequest, res: Response) {
+  if (!req.auth) {
+    res.status(401).json({ message: "Unauthorized" });
+    return;
+  }
+
+  const friendshipId = String(req.params.friendshipId ?? "");
+  const userId = req.auth.userId;
+
+  const friendship = await prisma.friendship.findUnique({
+    where: { id: friendshipId },
+  });
+
+  if (!friendship) {
+    res.status(404).json({ message: "Friendship not found" });
+    return;
+  }
+
+  if (friendship.requesterId !== userId && friendship.addresseeId !== userId) {
+    res.status(403).json({ message: "Not allowed" });
+    return;
+  }
+
+  await prisma.friendship.delete({
+    where: { id: friendship.id },
+  });
+
+  res.json({ message: "Friend removed" });
+}

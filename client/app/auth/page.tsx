@@ -106,7 +106,7 @@ export default function AuthPage() {
 		setStatus("");
 		setGoogleLoading(true);
 		try {
-			await signInWithOauth(`${window.location.origin}/auth/username`);
+			await signInWithOauth(`${window.location.origin}/auth/username?from=google`);
 		} catch {
 			setStatus("Could not start Google sign in.");
 			setGoogleLoading(false);

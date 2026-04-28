@@ -4,16 +4,28 @@ import { Chess, type Square } from "chess.js";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BoardPanel } from "@/components/game/BoardPanel";
+import { ChatPanel } from "@/components/game/ChatPanel";
 import { GameHeader } from "@/components/game/GameHeader";
 import { MovesPanel } from "@/components/game/MovesPanel";
 import { useStoredAuthToken } from "@/lib/auth";
 import { connectSocket, disconnectSocket, getSocket } from "@/lib/socket";
-import { SOCKET_BASE_URL } from "@/lib/runtime-config";
-import type { Ack, GameSnapshot, MoveResult, RematchRequestEvent, RematchStatusEvent, RoomState, DrawRequestEvent, DrawStatusEvent} from "@/types/socket";
+import { API_BASE_URL, SOCKET_BASE_URL } from "@/lib/runtime-config";
+import type {
+	Ack,
+	ChatMessage,
+	DrawRequestEvent,
+	DrawStatusEvent,
+	GameSnapshot,
+	MoveResult,
+	RematchRequestEvent,
+	RematchStatusEvent,
+	RoomState,
+} from "@/types/socket";
 import type { MoveLogItem } from "../types";
 import { formatGameOverStatus, INITIAL_CLOCK_MS, parseUserIdFromToken } from "../utils";
 
 const SOCKET_URL = SOCKET_BASE_URL;
+const API_URL = API_BASE_URL;
 
 export default function GamePage() {
 	const router = useRouter();
@@ -28,6 +40,8 @@ export default function GamePage() {
 	const [legalTargets, setLegalTargets] = useState<string[]>([]);
 	const [moves, setMoves] = useState<MoveLogItem[]>([]);
 	const [status, setStatus] = useState("Connecting...");
+	const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+	const [chatInput, setChatInput] = useState("");
 	const [clockMs, setClockMs] = useState({ w: INITIAL_CLOCK_MS, b: INITIAL_CLOCK_MS });
 	const [rematchRequestFrom, setRematchRequestFrom] = useState<string | null>(null);
 	const [isWaitingRematchResponse, setIsWaitingRematchResponse] = useState(false);
@@ -37,6 +51,7 @@ export default function GamePage() {
 
 	const activeTurnRef = useRef<"w" | "b" | null>(null);
 	const lastTickRef = useRef<number | null>(null);
+	const activeChatRoomRef = useRef<string | null>(null);
 
 	useEffect(() => {
 		if (!token) {
@@ -69,6 +84,16 @@ export default function GamePage() {
 
 		return new Chess(gameState.fen);
 	}, [gameState]);
+
+	const whiteUsername = gameState?.players.white.username || null;
+	const blackUsername = gameState?.players.black.username || null;
+	const opponentUsername = useMemo(() => {
+		if (!gameState || !myColor) {
+			return null;
+		}
+
+		return myColor === "w" ? gameState.players.black.username : gameState.players.white.username;
+	}, [gameState, myColor]);
 
 	useEffect(() => {
 		if (!gameState || gameState.status !== "active") {
@@ -129,6 +154,31 @@ export default function GamePage() {
 	}, [connected, currentRoom?.roomId, gameState]);
 
 	useEffect(() => {
+		if (!connected || !currentRoom?.roomId) {
+			return;
+		}
+
+		if (activeChatRoomRef.current === currentRoom.roomId) {
+			return;
+		}
+
+		const socket = getSocket();
+		if (!socket) {
+			return;
+		}
+
+		socket.emit("chat:history", (response: Ack<{ messages: ChatMessage[] }>) => {
+			if (!response.ok || !response.data) {
+				setStatus(response.ok ? "Unable to load chat history." : response.error);
+				return;
+			}
+
+			activeChatRoomRef.current = currentRoom.roomId;
+			setChatMessages(response.data.messages);
+		});
+	}, [connected, currentRoom?.roomId]);
+
+	useEffect(() => {
 		if (!token) {
 			return;
 		}
@@ -173,6 +223,7 @@ export default function GamePage() {
 		const onDisconnect = () => {
 			setConnected(false);
 			setStatus("Disconnected");
+			activeChatRoomRef.current = null;
 		};
 
 		const onRoomState = (room: RoomState) => {
@@ -302,6 +353,10 @@ export default function GamePage() {
 			setLegalTargets([]);
 		};
 
+		const onChatNew = (message: ChatMessage) => {
+			setChatMessages((prev) => [...prev, message]);
+		};
+
 		socket.on("connect", onConnect);
 		socket.on("disconnect", onDisconnect);
 		socket.on("room:state", onRoomState);
@@ -315,6 +370,7 @@ export default function GamePage() {
 		socket.on("game:rematch:status", onRematchStatus);
 		socket.on("game:draw:requested", onDrawRequested);
 		socket.on("game:draw:status", onDrawStatus);
+		socket.on("chat:new", onChatNew);
 		return () => {
 			socket.off("connect", onConnect);
 			socket.off("disconnect", onDisconnect);
@@ -329,6 +385,7 @@ export default function GamePage() {
 			socket.off("game:rematch:status", onRematchStatus);
 			socket.off("game:draw:requested", onDrawRequested);
 			socket.off("game:draw:status", onDrawStatus);
+			socket.off("chat:new", onChatNew);
 			disconnectSocket();
 		};
 	}, [myUserId, requestedRoomId, token]);
@@ -337,6 +394,8 @@ export default function GamePage() {
 		setCurrentRoom(null);
 		setGameState(null);
 		setMoves([]);
+		setChatMessages([]);
+		setChatInput("");
 		setSelectedSquare(null);
 		setLegalTargets([]);
 		setClockMs({ w: INITIAL_CLOCK_MS, b: INITIAL_CLOCK_MS });
@@ -345,6 +404,7 @@ export default function GamePage() {
 		setDrawRequestFrom(null);
 		setIsWaitingDrawResponse(false);
 		setCountdownSeconds(null);
+		activeChatRoomRef.current = null;
 		activeTurnRef.current = null;
 		lastTickRef.current = null;
 	}
@@ -518,6 +578,57 @@ export default function GamePage() {
 		});
 	}
 
+	function handleSendChat() {
+		const socket = getSocket();
+		const roomId = currentRoom?.roomId || requestedRoomId;
+		if (!socket || !roomId) {
+			setStatus("Join a room first.");
+			return;
+		}
+
+		const text = chatInput.trim();
+		if (!text) {
+			return;
+		}
+
+		socket.emit("chat:send", { roomId, text }, (response: Ack<ChatMessage>) => {
+			if (!response.ok) {
+				setStatus(response.error);
+				return;
+			}
+
+			setChatInput("");
+		});
+	}
+
+	async function handleAddOpponentAsFriend() {
+		if (!token || !opponentUsername) {
+			setStatus("Opponent not available.");
+			return;
+		}
+
+		try {
+			const response = await fetch(`${API_URL}/friends/request`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${token}`,
+				},
+				body: JSON.stringify({ username: opponentUsername.toLowerCase() }),
+			});
+
+			const data = (await response.json().catch(() => null)) as { message?: string } | null;
+			if (!response.ok) {
+				setStatus(data?.message || "Failed to send friend request.");
+				return;
+			}
+
+			setStatus(`Friend request sent to ${opponentUsername}.`);
+		} catch {
+			setStatus("Failed to send friend request.");
+		}
+	}
+
 	function handleSquareClick(square: string) {
 		if (!chess || !gameState || gameState.status !== "active") {
 			setStatus("Game is not active.");
@@ -608,6 +719,9 @@ export default function GamePage() {
 						chess={chess}
 						myColor={myColor}
 						gameState={gameState}
+						whiteUsername={whiteUsername}
+						blackUsername={blackUsername}
+						opponentColor={myColor === "w" ? "b" : myColor === "b" ? "w" : null}
 						isGameOver={isGameOver}
 						rematchRequestFrom={rematchRequestFrom}
 						isWaitingRematchResponse={isWaitingRematchResponse}
@@ -626,10 +740,22 @@ export default function GamePage() {
 						onOfferDraw={handleOfferDraw}
 						onAcceptDraw={handleAcceptDraw}
 						onDeclineDraw={handleDeclineDraw}
+						onAddOpponentAsFriend={handleAddOpponentAsFriend}
 						onExit={handleExitAfterGame}
 					/>
 
-					<MovesPanel moves={moves} />
+					<div className="grid min-h-140 grid-rows-2 gap-4">
+						<ChatPanel
+							messages={chatMessages}
+							value={chatInput}
+							connected={connected}
+							hasRoom={Boolean(currentRoom)}
+							currentUserId={myUserId}
+							onChange={setChatInput}
+							onSend={handleSendChat}
+						/>
+						<MovesPanel moves={moves} />
+					</div>
 				</section>
 			</div>
 		</main>

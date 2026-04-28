@@ -38,9 +38,25 @@ type ReceivedInvite = {
 
 type SocketClient = NonNullable<ReturnType<typeof getSocket>>;
 
+function parseUsernameFromToken(token: string): string | null {
+	try {
+		const payload = token.split(".")[1];
+		if (!payload) {
+			return null;
+		}
+
+		const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+		const decoded = JSON.parse(atob(base64)) as { username?: string };
+		return typeof decoded.username === "string" ? decoded.username : null;
+	} catch {
+		return null;
+	}
+}
+
 export default function HomePage() {
 	const router = useRouter();
 	const token = useStoredAuthToken();
+	const currentUsername = token ? parseUsernameFromToken(token) : null;
 	const [requestedInviteId] = useState(() => {
 		if (typeof window === "undefined") {
 			return "";
@@ -401,6 +417,16 @@ export default function HomePage() {
 		}
 	}
 
+	async function handleRemoveFriend(friendshipId: string, username: string) {
+		try {
+			await authFetch(`/friends/${friendshipId}`, { method: "DELETE" });
+			setStatus(`Removed ${username} from friends.`);
+			await refreshData();
+		} catch (error) {
+			setStatus(error instanceof Error ? error.message : "Failed to remove friend.");
+		}
+	}
+
 	async function handleLogout() {
 		const socket = getSocket();
 		if (socket && isMatchmaking) {
@@ -441,13 +467,18 @@ export default function HomePage() {
 						<div>
 							<p className="text-xl font-extrabold uppercase tracking-[0.28em] text-amber-100">Knight</p>
 						</div>
-						<button
-							type="button"
-							onClick={handleLogout}
-							className="px-4 py-2 underline decoration-transparent transition-colors duration-200 hover:decoration-white"
-						>
-							Logout
-						</button>
+						<div className="flex flex-col items-end leading-tight">
+							{currentUsername ? (
+								<p className="px-4 pt-1 pb-0 text-sm font-medium text-slate-300 underline decoration-transparent">{currentUsername}</p>
+							) : null}
+							<button
+								type="button"
+								onClick={handleLogout}
+								className="px-4 pt-0 pb-1 underline decoration-transparent transition-colors duration-200 hover:decoration-white"
+							>
+								Logout
+							</button>
+						</div>
 					</header>
 
 					{status ? (
@@ -664,14 +695,27 @@ export default function HomePage() {
 											{onlineUserIds.has(friend.id) ? "Online" : "Offline"}
 										</span>
 									</div>
-									<button
-										type="button"
-										onClick={() => handleInviteToGame(friend.id, friend.username)}
-										disabled={!onlineUserIds.has(friend.id)}
-										className="rounded-full bg-indigo-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-slate-400"
-									>
-										Invite
-									</button>
+									<div className="flex items-center gap-2">
+										<button
+											type="button"
+											onClick={() => handleInviteToGame(friend.id, friend.username)}
+											disabled={!onlineUserIds.has(friend.id)}
+											className="rounded-full bg-indigo-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-slate-400"
+										>
+											Invite
+										</button>
+										<button
+											type="button"
+											onClick={() => handleRemoveFriend(friend.friendshipId, friend.username)}
+											aria-label={`Remove ${friend.username} from friends`}
+											title={`Remove ${friend.username}`}
+											className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-slate-300 transition hover:border-rose-400/30 hover:bg-rose-500/10 hover:text-rose-200"
+										>
+											<svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4 fill-current">
+												<path d="M9 3.75A1.75 1.75 0 0 1 10.75 2h2.5A1.75 1.75 0 0 1 15 3.75V4.5h3.25a.75.75 0 0 1 0 1.5h-.7l-.74 11.14A2.75 2.75 0 0 1 14.06 20H9.94a2.75 2.75 0 0 1-2.75-2.86L6.45 6H5.75a.75.75 0 0 1 0-1.5H9v-.75Zm1.5.75v.75h3v-.75a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25Zm-1.73 2.5.7 10.78c.04.62.55 1.1 1.17 1.1h4.12c.62 0 1.13-.48 1.17-1.1l.7-10.78H8.77ZM10 9.5a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-1.5 0v-5A.75.75 0 0 1 10 9.5Zm4 0a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-1.5 0v-5A.75.75 0 0 1 14 9.5Z" />
+											</svg>
+										</button>
+									</div>
 								</div>
 							))}
 						</div>

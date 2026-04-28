@@ -81,6 +81,15 @@ export type MatchFoundEvent = {
   roomId: string;
   opponent: { userId: string; username: string };
 };
+
+export type ChatMessage = {
+  id: string;
+  roomId: string;
+  text: string;
+  createdAt: number;
+  by: { userId: string; username: string };
+};
+
 export type ClientToServerEvents = {
   "room:create": (payload: { roomId?: string }, callback: (response: Ack<RoomState>) => void) => void;
   "room:join": (payload: { roomId: string }, callback: (response: Ack<RoomState>) => void) => void;
@@ -101,6 +110,8 @@ export type ClientToServerEvents = {
 	"game:rematch:respond": (payload: { accept: boolean }, callback: (response: Ack<{ started?: boolean }>) => void) => void;
   "game:draw:request": (callback: (response: Ack<{ waitingFor?: string; accepted?: boolean }>) => void) => void;
   "game:draw:respond": (payload: { accept: boolean }, callback: (response: Ack<{ accepted?: boolean }>) => void) => void;
+  "chat:history": (callback: (response: Ack<{ messages: ChatMessage[] }>) => void) => void;
+  "chat:send": (payload: { text: string; roomId?: string }, callback: (response: Ack<ChatMessage>) => void) => void;
 };
 
 export type ServerToClientEvents = {
@@ -131,4 +142,5 @@ export type ServerToClientEvents = {
   "invite:accepted": (payload: InviteAcceptedEvent) => void;
   "game:draw:requested": (payload: DrawRequestEvent) => void;
   "game:draw:status": (payload: DrawStatusEvent) => void;
+  "chat:new": (message: ChatMessage) => void;
 };

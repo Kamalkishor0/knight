@@ -4,6 +4,7 @@ import {
   listFriendRequests,
   listFriends,
   rejectFriendRequest,
+  removeFriend,
   sendFriendRequest,
 } from "../controllers/friends.controller.js";
 import { authMiddleware } from "../middleware/auth.middleware.js";
@@ -17,5 +18,6 @@ friendsRouter.get("/requests", listFriendRequests);
 friendsRouter.post("/request", sendFriendRequest);
 friendsRouter.post("/request/:requestId/accept", acceptFriendRequest);
 friendsRouter.post("/request/:requestId/reject", rejectFriendRequest);
+friendsRouter.delete("/:friendshipId", removeFriend);
 
 export default friendsRouter;
