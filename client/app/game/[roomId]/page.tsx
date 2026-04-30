@@ -7,7 +7,7 @@ import { BoardPanel } from "@/components/game/BoardPanel";
 import { ChatPanel } from "@/components/game/ChatPanel";
 import { GameHeader } from "@/components/game/GameHeader";
 import { MovesPanel } from "@/components/game/MovesPanel";
-import { useStoredAuthToken } from "@/lib/auth";
+import { decodeAuthToken, useStoredAuthToken } from "@/lib/auth";
 import { connectSocket, disconnectSocket, getSocket } from "@/lib/socket";
 import { API_BASE_URL, SOCKET_BASE_URL } from "@/lib/runtime-config";
 import type {
@@ -22,7 +22,7 @@ import type {
 	RoomState,
 } from "@/types/socket";
 import type { MoveLogItem } from "../types";
-import { formatGameOverStatus, INITIAL_CLOCK_MS, parseUserIdFromToken } from "../utils";
+import { formatGameOverStatus, INITIAL_CLOCK_MS } from "../utils";
 
 const SOCKET_URL = SOCKET_BASE_URL;
 const API_URL = API_BASE_URL;
@@ -33,6 +33,8 @@ export default function GamePage() {
 	const requestedRoomId = (params?.roomId || "").trim().toUpperCase();
 
 	const token = useStoredAuthToken();
+	const tokenPayload = token ? decodeAuthToken(token) : null;
+	const isGuest = tokenPayload?.isGuest === true;
 	const [connected, setConnected] = useState(false);
 	const [currentRoom, setCurrentRoom] = useState<RoomState | null>(null);
 	const [gameState, setGameState] = useState<GameSnapshot | null>(null);
@@ -59,7 +61,7 @@ export default function GamePage() {
 		}
 	}, [router, token]);
 
-	const myUserId = useMemo(() => (token ? parseUserIdFromToken(token) : null), [token]);
+	const myUserId = tokenPayload?.userId ?? null;
 
 	const myColor = useMemo(() => {
 		if (!gameState || !myUserId) {
@@ -579,6 +581,11 @@ export default function GamePage() {
 	}
 
 	function handleSendChat() {
+		if (isGuest) {
+			setStatus("Sign in to use chat.");
+			return;
+		}
+
 		const socket = getSocket();
 		const roomId = currentRoom?.roomId || requestedRoomId;
 		if (!socket || !roomId) {
@@ -602,6 +609,11 @@ export default function GamePage() {
 	}
 
 	async function handleAddOpponentAsFriend() {
+		if (isGuest) {
+			setStatus("Sign in to add friends.");
+			return;
+		}
+
 		if (!token || !opponentUsername) {
 			setStatus("Opponent not available.");
 			return;
@@ -740,7 +752,8 @@ export default function GamePage() {
 						onOfferDraw={handleOfferDraw}
 						onAcceptDraw={handleAcceptDraw}
 						onDeclineDraw={handleDeclineDraw}
-						onAddOpponentAsFriend={handleAddOpponentAsFriend}
+							canAddOpponentAsFriend={!isGuest}
+							onAddOpponentAsFriend={handleAddOpponentAsFriend}
 						onExit={handleExitAfterGame}
 					/>
 
@@ -750,11 +763,11 @@ export default function GamePage() {
 							value={chatInput}
 							connected={connected}
 							hasRoom={Boolean(currentRoom)}
+							canChat={!isGuest}
 							currentUserId={myUserId}
 							onChange={setChatInput}
 							onSend={handleSendChat}
-						/>
-						<MovesPanel moves={moves} />
+						/>						<MovesPanel moves={moves} />
 					</div>
 				</section>
 			</div>

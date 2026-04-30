@@ -10,6 +10,7 @@ import {
   getGameSnapshot,
   getRoomState,
   isUserOnline,
+  finishGameWithForfeit,
   leaveRoom,
   maybeStartGame,
   normalizeRoomId,
@@ -217,19 +218,16 @@ function attemptMatchmaking(io: TypedServer) {
   }
 }
 
-async function areFriends(userIdA: string, userIdB: string): Promise<boolean> {
-  const friendship = await prisma.friendship.findFirst({
-    where: {
-      status: "ACCEPTED",
-      OR: [
-        { requesterId: userIdA, addresseeId: userIdB },
-        { requesterId: userIdB, addresseeId: userIdA },
-      ],
-    },
-    select: { id: true },
-  });
+function findOnlineUserByUsername(username: string) {
+  const normalizedUsername = username.trim().toLowerCase();
 
-  return Boolean(friendship);
+  for (const user of onlineUsers.values()) {
+    if (user.username.trim().toLowerCase() === normalizedUsername) {
+      return user;
+    }
+  }
+
+  return null;
 }
 
 const rematchAcceptedByRoomId = new Map<string, Set<string>>();
@@ -484,6 +482,11 @@ export function registerChessGateway(io: TypedServer) {
     socket.on("chat:history", (callback) => {
       cleanupChatForDeletedRooms();
 
+      if (socket.data.auth.isGuest) {
+        callback({ ok: false, error: "Guests cannot use chat" });
+        return;
+      }
+
       const roomId = roomByUserId.get(userId);
       if (!roomId) {
         callback({ ok: false, error: "You are not in a room" });
@@ -504,6 +507,11 @@ export function registerChessGateway(io: TypedServer) {
 
     socket.on("chat:send", (payload, callback) => {
       cleanupChatForDeletedRooms();
+
+      if (socket.data.auth.isGuest) {
+        callback({ ok: false, error: "Guests cannot use chat" });
+        return;
+      }
 
       const roomId = roomByUserId.get(userId);
       if (!roomId) {
@@ -891,26 +899,23 @@ export function registerChessGateway(io: TypedServer) {
       removeFromMatchmaking(io, userId);
 
       const toUserId = payload.toUserId?.trim();
-      if (!toUserId) {
+      const toUsername = payload.toUsername?.trim();
+      const targetUser = toUserId ? onlineUsers.get(toUserId) ?? null : toUsername ? findOnlineUserByUsername(toUsername) : null;
+
+      if (!targetUser) {
         callback({ ok: false, error: "Missing target user" });
         return;
       }
 
-      if (toUserId === userId) {
+      if (targetUser.userId === userId) {
         callback({ ok: false, error: "You cannot invite yourself" });
         return;
       }
 
       const roomId = payload.roomId ? normalizeRoomId(payload.roomId) : roomByUserId.get(userId);
 
-      const friend = await areFriends(userId, toUserId);
-      if (!friend) {
-        callback({ ok: false, error: "You can only invite users from your friend list" });
-        return;
-      }
-
-      if (!isUserOnline(toUserId)) {
-        callback({ ok: false, error: "Friend is offline" });
+      if (!isUserOnline(targetUser.userId)) {
+        callback({ ok: false, error: "Player is offline" });
         return;
       }
 
@@ -919,15 +924,15 @@ export function registerChessGateway(io: TypedServer) {
         inviteId,
         fromUserId: userId,
         fromUsername: username,
-        toUserId,
+        toUserId: targetUser.userId,
         createdAt: Date.now(),
       });
 
       const inviteLink = `${socket.handshake.headers.origin || "http://localhost:3000"}/home?invite=${encodeURIComponent(inviteId)}`;
 
-      const friendSocketIds = socketsByUserId.get(toUserId);
-      if (friendSocketIds) {
-        for (const socketId of friendSocketIds) {
+      const targetSocketIds = socketsByUserId.get(targetUser.userId);
+      if (targetSocketIds) {
+        for (const socketId of targetSocketIds) {
           io.to(socketId).emit("invite:received", {
             from: { userId, username },
             inviteId,
@@ -962,12 +967,6 @@ export function registerChessGateway(io: TypedServer) {
 
       if (!isUserOnline(invite.fromUserId)) {
         callback({ ok: false, error: "Friend is offline" });
-        return;
-      }
-
-      const friend = await areFriends(userId, invite.fromUserId);
-      if (!friend) {
-        callback({ ok: false, error: "Invite sender is no longer in your friend list" });
         return;
       }
 
@@ -1035,6 +1034,14 @@ export function registerChessGateway(io: TypedServer) {
           onlineUsers.delete(userId);
           const currentRoomId = roomByUserId.get(userId);
           if (currentRoomId) {
+            const room = rooms.get(currentRoomId);
+            if (room && room.game && room.players.size === 2) {
+              const opponentUserId = Array.from(room.players.keys()).find((id) => id !== userId);
+              if (opponentUserId && isUserOnline(opponentUserId)) {
+                finishGameWithForfeit(io, currentRoomId, userId, `${username} disconnected`);
+              }
+            }
+
             broadcastRoomState(io, currentRoomId);
             drawOfferedByRoomId.delete(currentRoomId);
           }

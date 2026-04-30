@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { clearStoredAuthToken, useStoredAuthToken } from "@/lib/auth";
+import { clearStoredAuthToken, decodeAuthToken, useStoredAuthToken } from "@/lib/auth";
 import { connectSocket, disconnectSocket, getSocket } from "@/lib/socket";
 import { API_BASE_URL, SOCKET_BASE_URL } from "@/lib/runtime-config";
 import type { Ack, InviteAcceptedEvent, MatchmakingStatusEvent, RoomState } from "@/types/socket";
@@ -38,25 +38,14 @@ type ReceivedInvite = {
 
 type SocketClient = NonNullable<ReturnType<typeof getSocket>>;
 
-function parseUsernameFromToken(token: string): string | null {
-	try {
-		const payload = token.split(".")[1];
-		if (!payload) {
-			return null;
-		}
 
-		const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
-		const decoded = JSON.parse(atob(base64)) as { username?: string };
-		return typeof decoded.username === "string" ? decoded.username : null;
-	} catch {
-		return null;
-	}
-}
 
 export default function HomePage() {
 	const router = useRouter();
 	const token = useStoredAuthToken();
-	const currentUsername = token ? parseUsernameFromToken(token) : null;
+	const tokenPayload = token ? decodeAuthToken(token) : null;
+	const currentUsername = tokenPayload?.username ?? null;
+	const isGuest = tokenPayload?.isGuest === true;
 	const [requestedInviteId] = useState(() => {
 		if (typeof window === "undefined") {
 			return "";
@@ -66,6 +55,7 @@ export default function HomePage() {
 	});
 	const [hasHydrated, setHasHydrated] = useState(false);
 	const [friendUsername, setFriendUsername] = useState("");
+	const [inviteUsername, setInviteUsername] = useState("");
 	const [friends, setFriends] = useState<Friend[]>([]);
 	const [incoming, setIncoming] = useState<IncomingRequest[]>([]);
 	const [outgoing, setOutgoing] = useState<OutgoingRequest[]>([]);
@@ -139,6 +129,14 @@ export default function HomePage() {
 			return;
 		}
 
+		if (isGuest) {
+			setFriends([]);
+			setIncoming([]);
+			setOutgoing([]);
+			setLoading(false);
+			return;
+		}
+
 		setLoading(true);
 		setStatus("");
 		try {
@@ -156,7 +154,7 @@ export default function HomePage() {
 	useEffect(() => {
 		void refreshData();
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [router, token]);
+	}, [isGuest, router, token]);
 
 	useEffect(() => {
 		if (!token) {
@@ -166,6 +164,10 @@ export default function HomePage() {
 		const socket = connectSocket({ token, url: SOCKET_URL });
 
 		const onOnline = (users: Array<{ userId: string; username: string }>) => {
+			if (isGuest) {
+				return;
+			}
+
 			setOnlineUserIds(new Set(users.map((user) => user.userId)));
 		};
 
@@ -201,21 +203,25 @@ export default function HomePage() {
 			router.push(`/game/${encodeURIComponent(payload.roomId)}`);
 		};
 
-		socket.on("presence:online", onOnline);
+		if (!isGuest) {
+			socket.on("presence:online", onOnline);
+		}
 		socket.on("invite:received", onInviteReceived);
 		socket.on("invite:accepted", onInviteAccepted);
 		socket.on("matchmaking:status", onMatchmakingStatus);
 		socket.on("matchmaking:found", onMatchmakingFound);
 
 		return () => {
-			socket.off("presence:online", onOnline);
+			if (!isGuest) {
+				socket.off("presence:online", onOnline);
+			}
 			socket.off("invite:received", onInviteReceived);
 			socket.off("invite:accepted", onInviteAccepted);
 			socket.off("matchmaking:status", onMatchmakingStatus);
 			socket.off("matchmaking:found", onMatchmakingFound);
 			disconnectSocket();
 		};
-	}, [router, token]);
+	}, [isGuest, router, token]);
 
 	function getOrInitSocket() {
 		return getSocket() ?? connectSocket({ token, url: SOCKET_URL });
@@ -336,6 +342,34 @@ export default function HomePage() {
 		}
 	}
 
+	async function handleInviteByUsername(event: FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+
+		const normalizedUsername = inviteUsername.trim().toLowerCase();
+		if (!normalizedUsername) {
+			setStatus("Enter a username.");
+			return;
+		}
+
+		try {
+			const socket = await waitForConnected();
+
+			const invited = await new Promise<Ack<{ inviteId: string; inviteLink: string; roomId?: string }>>((resolve) => {
+				socket.emit("invite:send", { toUsername: normalizedUsername }, (response) => resolve(response));
+			});
+
+			if (!invited.ok || !invited.data) {
+				setStatus(invited.ok ? "Failed to send invite." : invited.error);
+				return;
+			}
+
+			setInviteUsername("");
+			setStatus(`Invite sent to ${normalizedUsername}.`);
+		} catch (error) {
+			setStatus(error instanceof Error ? error.message : "Failed to invite player.");
+		}
+	}
+
 	async function acceptInviteAndGo(inviteId: string) {
 		const trimmedInviteId = inviteId.trim();
 		if (!trimmedInviteId) {
@@ -379,6 +413,11 @@ export default function HomePage() {
 
 	async function handleAddFriend(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
+		if (isGuest) {
+			setStatus("Guests cannot send friend requests.");
+			return;
+		}
+
 		if (!friendUsername.trim()) {
 			setStatus("Enter a username.");
 			return;
@@ -555,43 +594,63 @@ export default function HomePage() {
 									onClick={handleScrollToCommunity}
 									className="rounded-full border border-white/10 px-5 py-3 text-sm font-medium text-slate-200 transition hover:border-white/20 hover:bg-white/5"
 								>
-									See friends
+									{isGuest ? "Open guest lobby" : "See friends"}
 								</button>
 							</div>
 						</div>
 					</div>
 				</section>
 
-				<section id="community" className="snap-start px-4 pt-14 pb-6 sm:px-6 lg:min-h-screen lg:px-8 lg:pt-16 lg:pb-8">
+				<section id="community" className={`snap-start px-4 pt-14 pb-6 sm:px-6 lg:min-h-screen lg:px-8 lg:pt-16 lg:pb-8 ${isGuest ? "" : ""}`}>
 					<div className="grid gap-4 lg:grid-cols-12">
-					<div className="rounded-[1.75rem] border border-white/10 bg-white/5 p-4 shadow-xl shadow-black/15 backdrop-blur-xl lg:col-span-12">
+						<div className="rounded-[1.75rem] border border-white/10 bg-slate-950/55 p-4 shadow-xl shadow-black/15 backdrop-blur-xl lg:col-span-12">
+							<h2 className="text-lg font-semibold text-white">Invite by username</h2>
+							<p className="mt-1 text-sm text-slate-400">Search a player by username and send a direct game invite. Works for guests and signed-in users.</p>
+							<form onSubmit={handleInviteByUsername} className="mt-4 flex w-full max-w-sm gap-2">
+								<input
+									type="text"
+									placeholder="Player username"
+									value={inviteUsername}
+									onChange={(event) => setInviteUsername(event.target.value)}
+									className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-300/40 focus:outline-none"
+								/>
+								<button
+									type="submit"
+									className="rounded-2xl bg-indigo-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-400"
+								>
+									Invite
+								</button>
+							</form>
+						</div>
+
+					<div className={`rounded-[1.75rem] border border-white/10 bg-white/5 p-4 shadow-xl shadow-black/15 backdrop-blur-xl lg:col-span-12 ${isGuest ? "hidden" : ""}`}>
 						<div className="flex flex-wrap items-center justify-between gap-3">
 							<div>
 								<p className="text-xs uppercase tracking-[0.26em] text-slate-400">Status</p>
 								<h2 className="mt-1 text-xl font-semibold text-white">Your lobby, requests, and invites</h2>
 							</div>
 							<p className="rounded-full border border-white/10 bg-slate-950/40 px-3 py-1 text-xs text-slate-300">
-								{loading ? "Syncing latest data..." : `${friends.length} friends • ${incoming.length} incoming • ${outgoing.length} outgoing`}
+							{loading ? "Syncing latest data..." : isGuest ? "Guest mode" : `${friends.length} friends • ${incoming.length} incoming • ${outgoing.length} outgoing`}
 							</p>
 						</div>
 					</div>
 
-					<div className="rounded-[1.75rem] border border-white/10 bg-slate-950/55 p-4 shadow-xl shadow-black/15 backdrop-blur-xl lg:col-span-4">
+					<div className={`rounded-[1.75rem] border border-white/10 bg-slate-950/55 p-4 shadow-xl shadow-black/15 backdrop-blur-xl lg:col-span-4 ${isGuest ? "hidden" : ""}`}>
 						<h2 className="text-lg font-semibold text-white">Add friend</h2>
 						<p className="mt-1 text-sm text-slate-400">Send a request and build your play list.</p>
-						<form onSubmit={handleAddFriend} className="mt-4 flex gap-2">
+						<form onSubmit={handleAddFriend} className="mt-4 flex w-full max-w-xs gap-2">
 							<input
 								type="text"
 								placeholder="Friend username"
 								value={friendUsername}
 								onChange={(event) => setFriendUsername(event.target.value)}
-								className="w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-slate-100 placeholder:text-slate-500 focus:border-amber-300/40 focus:outline-none"
+								className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-300/40 focus:outline-none"
 							/>
 							<button
 								type="submit"
-								className="rounded-2xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-400"
+								className="rounded-2xl bg-emerald-500 px-3 py-2 text-sm font-semibold text-white whitespace-nowrap transition hover:bg-emerald-400"
 							>
-								Send
+								Send request
 							</button>
 						</form>
 					</div>
@@ -626,7 +685,7 @@ export default function HomePage() {
 						</div>
 					</div>
 
-					<div className="rounded-[1.75rem] border border-white/10 bg-slate-950/55 p-4 shadow-xl shadow-black/15 backdrop-blur-xl lg:col-span-6">
+					<div className={`rounded-[1.75rem] border border-white/10 bg-slate-950/55 p-4 shadow-xl shadow-black/15 backdrop-blur-xl lg:col-span-6 ${isGuest ? "hidden" : ""}`}>
 						<h2 className="text-lg font-semibold text-white">Incoming requests</h2>
 						<p className="mt-1 text-sm text-slate-400">Approve or reject new friend requests.</p>
 						<div className="mt-4 space-y-3">
@@ -656,7 +715,7 @@ export default function HomePage() {
 						</div>
 					</div>
 
-					<div className="rounded-[1.75rem] border border-white/10 bg-slate-950/55 p-4 shadow-xl shadow-black/15 backdrop-blur-xl lg:col-span-6">
+					<div className={`rounded-[1.75rem] border border-white/10 bg-slate-950/55 p-4 shadow-xl shadow-black/15 backdrop-blur-xl lg:col-span-6 ${isGuest ? "hidden" : ""}`}>
 						<h2 className="text-lg font-semibold text-white">Outgoing requests</h2>
 						<p className="mt-1 text-sm text-slate-400">Waiting for responses from other players.</p>
 						<div className="mt-4 space-y-3">
@@ -670,7 +729,7 @@ export default function HomePage() {
 						</div>
 					</div>
 
-					<div className="rounded-[1.75rem] border border-white/10 bg-slate-950/55 p-4 shadow-xl shadow-black/15 backdrop-blur-xl lg:col-span-12">
+					<div className={`rounded-[1.75rem] border border-white/10 bg-slate-950/55 p-4 shadow-xl shadow-black/15 backdrop-blur-xl lg:col-span-12 ${isGuest ? "hidden" : ""}`}>
 						<div className="flex flex-wrap items-center justify-between gap-2">
 							<div>
 								<h2 className="text-lg font-semibold text-white">Friends list</h2>

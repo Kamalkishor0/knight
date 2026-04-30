@@ -8,6 +8,11 @@ export async function listFriends(req: AuthenticatedRequest, res: Response) {
     return;
   }
 
+  if (req.auth.isGuest) {
+    res.status(403).json({ message: "Guests cannot view the friends list" });
+    return;
+  }
+
   const userId = req.auth.userId;
 
   const friendships = await prisma.friendship.findMany({
@@ -37,6 +42,11 @@ export async function listFriends(req: AuthenticatedRequest, res: Response) {
 export async function listFriendRequests(req: AuthenticatedRequest, res: Response) {
   if (!req.auth) {
     res.status(401).json({ message: "Unauthorized" });
+    return;
+  }
+
+  if (req.auth.isGuest) {
+    res.status(403).json({ message: "Guests cannot view friend requests" });
     return;
   }
 
@@ -76,6 +86,11 @@ export async function listFriendRequests(req: AuthenticatedRequest, res: Respons
 export async function sendFriendRequest(req: AuthenticatedRequest, res: Response) {
   if (!req.auth) {
     res.status(401).json({ message: "Unauthorized" });
+    return;
+  }
+
+  if (req.auth.isGuest) {
+    res.status(403).json({ message: "Guests cannot send friend requests" });
     return;
   }
 
@@ -163,6 +178,11 @@ export async function acceptFriendRequest(req: AuthenticatedRequest, res: Respon
     return;
   }
 
+  if (req.auth.isGuest) {
+    res.status(403).json({ message: "Guests cannot manage friend requests" });
+    return;
+  }
+
   const requestId = String(req.params.requestId ?? "");
   const userId = req.auth.userId;
 
@@ -212,6 +232,11 @@ export async function rejectFriendRequest(req: AuthenticatedRequest, res: Respon
     return;
   }
 
+  if (req.auth.isGuest) {
+    res.status(403).json({ message: "Guests cannot manage friend requests" });
+    return;
+  }
+
   const requestId = String(req.params.requestId ?? "");
   const userId = req.auth.userId;
 
@@ -252,6 +277,11 @@ export async function rejectFriendRequest(req: AuthenticatedRequest, res: Respon
 export async function removeFriend(req: AuthenticatedRequest, res: Response) {
   if (!req.auth) {
     res.status(401).json({ message: "Unauthorized" });
+    return;
+  }
+
+  if (req.auth.isGuest) {
+    res.status(403).json({ message: "Guests cannot manage friends" });
     return;
   }
 

@@ -97,16 +97,24 @@ export async function register(req: Request, res: Response) {
       username: true,
       email: true,
       createdAt: true,
+      isGuest: true,
     },
   });
 
-  const token = signToken({username: user.username, userId: user.id, email: user.email });
+  const token = signToken({ username: user.username, userId: user.id, email: user.email, isGuest: false });
   res.status(201).json({ token, user });
 }
 
 export async function setUsername(req: AuthenticatedRequest, res: Response) {
-  if (!req.auth) {
+  const auth = req.auth;
+
+  if (!auth) {
     res.status(401).json({ message: "Unauthorized" });
+    return;
+  }
+
+  if (auth.isGuest) {
+    res.status(403).json({ message: "Guests cannot change username" });
     return;
   }
 
@@ -127,7 +135,7 @@ export async function setUsername(req: AuthenticatedRequest, res: Response) {
   }
 
   const currentUser = await prisma.user.findUnique({
-    where: { id: req.auth.userId },
+    where: { id: auth.userId },
   });
 
   if (!currentUser) {
@@ -157,13 +165,20 @@ export async function setUsername(req: AuthenticatedRequest, res: Response) {
     },
   });
 
-  const token = signToken({ username: user.username, userId: user.id, email: user.email });
+  const token = signToken({ username: user.username, userId: user.id, email: user.email, isGuest: false });
   res.json({ token, user });
 }
 
 export async function setPassword(req: AuthenticatedRequest, res: Response) {
-  if (!req.auth) {
+  const auth = req.auth;
+
+  if (!auth) {
     res.status(401).json({ message: "Unauthorized" });
+    return;
+  }
+
+  if (auth.isGuest) {
+    res.status(403).json({ message: "Guests cannot change password" });
     return;
   }
 
@@ -182,7 +197,7 @@ export async function setPassword(req: AuthenticatedRequest, res: Response) {
   }
 
   const user = await prisma.user.findUnique({
-    where: { id: req.auth.userId },
+    where: { id: auth.userId },
     select: { id: true },
   });
 
@@ -225,6 +240,7 @@ export async function loginWithGoogle(req: Request, res: Response) {
       username: true,
       email: true,
       createdAt: true,
+      isGuest: true,
     },
   });
 
@@ -241,11 +257,12 @@ export async function loginWithGoogle(req: Request, res: Response) {
         username: true,
         email: true,
         createdAt: true,
+        isGuest: true,
       },
     });
   }
 
-  const token = signToken({ username: user.username, userId: user.id, email: user.email });
+  const token = signToken({ username: user.username, userId: user.id, email: user.email, isGuest: false });
   res.json({ token, user });
 }
 
@@ -295,7 +312,7 @@ export async function login(req: Request, res: Response) {
     return;
   }
 
-  const token = signToken({username: user.username, userId: user.id, email: user.email });
+  const token = signToken({ username: user.username, userId: user.id, email: user.email, isGuest: user.isGuest });
 
   res.json({
     token,
@@ -304,6 +321,7 @@ export async function login(req: Request, res: Response) {
       username: user.username,
       email: user.email,
       createdAt: user.createdAt,
+      isGuest: user.isGuest,
     },
   });
 }
@@ -321,6 +339,7 @@ export async function me(req: AuthenticatedRequest, res: Response) {
       username: true,
       email: true,
       createdAt: true,
+      isGuest: true,
     },
   });
 
@@ -330,4 +349,29 @@ export async function me(req: AuthenticatedRequest, res: Response) {
   }
 
   res.json({ user });
+}
+
+export async function guest(req: Request, res: Response) {
+  const username = `guest-${randomUUID().slice(0, 8)}`;
+  const email = `${username}@guest.com`;
+  const passwordHash = await bcrypt.hash(randomUUID(), 12);
+
+  const user = await prisma.user.create({
+    data: {
+      username,
+      email,
+      password: passwordHash,
+      isGuest: true,
+    },
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      createdAt: true,
+      isGuest: true,
+    },
+  });
+
+  const token = signToken({ username: user.username, userId: user.id, email: user.email, isGuest: true });
+  res.json({ token, user });
 }

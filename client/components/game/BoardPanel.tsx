@@ -20,6 +20,7 @@ type BoardPanelProps = {
 	files: string[];
 	ranks: number[];
 	countdownSeconds: number | null;
+	canAddOpponentAsFriend: boolean;
 	onSquareClick: (square: string) => void;
 	onNewGame: () => void;
 	onAcceptRematch: () => void;
@@ -49,6 +50,7 @@ export function BoardPanel({
 	files,
 	ranks,
 	countdownSeconds,
+	canAddOpponentAsFriend,
 	onSquareClick,
 	onNewGame,
 	onAcceptRematch,
@@ -150,7 +152,7 @@ export function BoardPanel({
 					<div className="flex items-center justify-between gap-2">
 						<div className="font-medium">White</div>
 						<div className="w-8">
-							{opponentColor === "w" ? (
+							{opponentColor === "w" && canAddOpponentAsFriend ? (
 								<button
 									type="button"
 									title="Add opponent as friend"
@@ -177,7 +179,7 @@ export function BoardPanel({
 					<div className="flex items-center justify-between gap-2">
 						<div className="font-medium">Black</div>
 						<div className="w-8">
-							{opponentColor === "b" ? (
+							{opponentColor === "b" && canAddOpponentAsFriend ? (
 								<button
 									type="button"
 									title="Add opponent as friend"

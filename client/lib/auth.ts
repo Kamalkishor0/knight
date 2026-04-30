@@ -21,6 +21,13 @@ export async function signInWithOauth(redirectTo?: string) {
 export const AUTH_TOKEN_STORAGE_KEY = "knight-auth-token";
 const AUTH_TOKEN_CHANGE_EVENT = "knight-auth-token-change";
 
+export type AuthTokenPayload = {
+	username?: string;
+	userId?: string;
+	email?: string;
+	isGuest?: boolean;
+};
+
 function notifyAuthTokenChanged() {
 	if (typeof window === "undefined") {
 		return;
@@ -35,6 +42,21 @@ export function getStoredAuthToken() {
 	}
 
 	return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || "";
+}
+
+export function decodeAuthToken(token: string): AuthTokenPayload | null {
+	try {
+		const payload = token.split(".")[1];
+		if (!payload) {
+			return null;
+		}
+
+		const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+		const decoded = JSON.parse(atob(base64)) as AuthTokenPayload;
+		return decoded;
+	} catch {
+		return null;
+	}
 }
 
 export function clearStoredAuthToken() {

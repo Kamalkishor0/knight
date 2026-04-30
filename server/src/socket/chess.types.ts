@@ -114,7 +114,7 @@ export type ClientToServerEvents = {
   "game:state": (callback: (response: Ack<GameSnapshot>) => void) => void;
   "chess:move": (payload: MovePayload, callback: (response: Ack<MoveResult>) => void) => void;
   "invite:send": (
-    payload: { toUserId: string; roomId?: string },
+    payload: { toUserId?: string; toUsername?: string; roomId?: string },
     callback: (response: Ack<{ inviteId: string; inviteLink: string; roomId?: string }>) => void,
   ) => void;
   "invite:accept": (payload: { inviteId: string }, callback: (response: Ack<RoomState>) => void) => void;

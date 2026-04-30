@@ -113,6 +113,31 @@ export default function AuthPage() {
 		}
 	}
 
+	async function handleGuestSignIn() {
+		setStatus("");
+		setLoading(true);
+		try {
+			const response = await fetch(`${API_URL}/auth/guest`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+			});
+
+			const data = (await response.json().catch(() => null)) as AuthResponse | { message?: string } | null;
+			if (!response.ok || !data || !("token" in data)) {
+				setStatus(data && "message" in data && data.message ? data.message : "Guest sign in failed.");
+				return;
+			}
+
+			setStoredAuthToken(data.token);
+			setStatus("Continuing as guest...");
+			router.push("/home");
+		} catch {
+			setStatus("Could not start guest session.");
+		} finally {
+			setLoading(false);
+		}
+	}
+
 	return (
 		<main className="min-h-screen bg-slate-900 px-6 py-10 text-slate-100 flex items-center justify-center">
 			<div className="mx-auto w-full max-w-md rounded-2xl border border-slate-700 bg-slate-800 p-6 shadow-lg shadow-black/20">
@@ -220,11 +245,20 @@ export default function AuthPage() {
 							{googleLoading ? "Connecting to Google..." : "Continue with Google"}
 						</button>
 					) : null}
-				</form>
+					</form>
 
-				<p className="mt-3 text-xs leading-5 text-slate-400">
-					After signup or Google sign in, you will be asked to choose your username.
-				</p>
+					<button
+						type="button"
+						disabled={loading}
+						onClick={() => void handleGuestSignIn()}
+						className="mt-3 flex w-full items-center justify-center rounded-md border border-amber-400/30 bg-amber-400/10 px-3 py-2 font-medium text-amber-100 transition hover:border-amber-300/50 hover:bg-amber-400/15 disabled:cursor-not-allowed disabled:opacity-70"
+					>
+						{loading ? "Creating guest session..." : "Continue as guest"}
+					</button>
+
+					<p className="mt-3 text-xs leading-5 text-slate-400">
+						After signup or Google sign in, you will be asked to choose your username.
+					</p>
 
 				{status ? <p className="mt-4 text-sm text-slate-300">{status}</p> : null}
 			</div>

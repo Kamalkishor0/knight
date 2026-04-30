@@ -184,6 +184,29 @@ export function broadcastGameState(io: TypedServer, roomId: string) {
   }
 }
 
+export function finishGameWithForfeit(io: TypedServer, roomId: string, leaverUserId: string, reason?: string) {
+  const room = rooms.get(roomId);
+  if (!room || !room.game) {
+    return;
+  }
+
+  const isWhite = room.game.whiteUserId === leaverUserId;
+  const isBlack = room.game.blackUserId === leaverUserId;
+  if (!isWhite && !isBlack) {
+    return;
+  }
+
+  // Set the leaver's clock to zero so snapshot reports a timeout win for opponent.
+  room.game.clockMs[isWhite ? "w" : "b"] = 0;
+  room.game.lastTickAt = null;
+
+  if (reason) {
+    io.to(roomId).emit("room:error", { message: reason });
+  }
+
+  broadcastGameState(io, roomId);
+}
+
 export function clearRoomStartCountdown(roomId: string) {
   const timer = roomStartCountdownByRoomId.get(roomId);
   if (!timer) {
@@ -286,13 +309,15 @@ export function leaveRoom(io: TypedServer, socket: TypedSocket, userId: string, 
     return;
   }
 
+  // If a player leaves during an active game and there is an opponent,
+  // mark the game as a forfeit (declare the opponent the winner) before removing them.
+  if (room.game && (room.game.whiteUserId === userId || room.game.blackUserId === userId) && room.players.size === 2) {
+    finishGameWithForfeit(io, roomId, userId, `${socket.data.auth.username} left the room`);
+  }
+
   room.players.delete(userId);
   roomByUserId.delete(userId);
   socket.leave(roomId);
-
-  if (room.game && (room.game.whiteUserId === userId || room.game.blackUserId === userId)) {
-    room.game = undefined;
-  }
 
   if (room.players.size < 2) {
     clearRoomStartCountdown(roomId);
@@ -332,11 +357,13 @@ export function removeUserFromRoom(io: TypedServer, userId: string, reason?: str
     return;
   }
 
-  room.players.delete(userId);
-
-  if (room.game && (room.game.whiteUserId === userId || room.game.blackUserId === userId)) {
-    room.game = undefined;
+  // If a player is removed during an active game and there is an opponent,
+  // mark the game as a forfeit (declare the opponent the winner) before removing them.
+  if (room.game && (room.game.whiteUserId === userId || room.game.blackUserId === userId) && room.players.size === 2) {
+    finishGameWithForfeit(io, roomId, userId, reason);
   }
+
+  room.players.delete(userId);
 
   if (room.players.size < 2) {
     clearRoomStartCountdown(roomId);

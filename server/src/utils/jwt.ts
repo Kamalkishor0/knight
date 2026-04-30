@@ -18,12 +18,17 @@ export function verifyToken(token: string): JwtPayload | null {
     const userId = payload.userId;
     const email = payload.email;
     const username = payload.username;
+    const isGuest = payload.isGuest;
 
     if (typeof userId !== "string" || typeof email !== "string" || typeof username !== "string") {
       return null;
     }
 
-    return { username, userId, email };
+    if (typeof isGuest !== "undefined" && typeof isGuest !== "boolean") {
+      return null;
+    }
+
+    return { username, userId, email, isGuest: isGuest === true };
   } catch {
     return null;
   }

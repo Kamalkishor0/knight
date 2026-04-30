@@ -6,6 +6,7 @@ type ChatPanelProps = {
   value: string;
   connected: boolean;
   hasRoom: boolean;
+  canChat: boolean;
   currentUserId?: string | null;
   onChange: (value: string) => void;
   onSend: () => void;
@@ -18,8 +19,8 @@ function formatMessageTime(createdAt: number): string {
   });
 }
 
-export function ChatPanel({ messages, value, connected, hasRoom, currentUserId, onChange, onSend }: ChatPanelProps) {
-  const disabled = !connected || !hasRoom;
+export function ChatPanel({ messages, value, connected, hasRoom, canChat, currentUserId, onChange, onSend }: ChatPanelProps) {
+  const disabled = !connected || !hasRoom || !canChat;
   const listRef = useRef<HTMLUListElement | null>(null);
 
   useEffect(() => {
@@ -74,7 +75,7 @@ export function ChatPanel({ messages, value, connected, hasRoom, currentUserId, 
               onSend();
             }
           }}
-          placeholder={disabled ? "Join a room to chat" : "Type a message..."}
+          placeholder={!canChat ? "Sign in to chat" : disabled ? "Join a room to chat" : "Type a message..."}
           maxLength={300}
           disabled={disabled}
           className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none ring-sky-500 transition focus:ring-2 disabled:cursor-not-allowed disabled:opacity-60"
